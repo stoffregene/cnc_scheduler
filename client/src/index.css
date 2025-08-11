@@ -1,0 +1,61 @@
+/* Global styles for dark mode support */
+body {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+body.dark-mode {
+  background-color: #0a0a0a;
+  color: #e2e8f0;
+}
+
+/* Smooth transitions for theme changes */
+* {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Custom scrollbar for dark mode */
+body.dark-mode::-webkit-scrollbar {
+  width: 8px;
+}
+
+body.dark-mode::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+body.dark-mode::-webkit-scrollbar-thumb {
+  background: #4a5568;
+  border-radius: 4px;
+}
+
+body.dark-mode::-webkit-scrollbar-thumb:hover {
+  background: #718096;
+}
+
+/* Light mode scrollbar */
+body::-webkit-scrollbar {
+  width: 8px;
+}
+
+body::-webkit-scrollbar-track {
+  background: #f7fafc;
+}
+
+body::-webkit-scrollbar-thumb {
+  background: #cbd5e0;
+  border-radius: 4px;
+}
+
+body::-webkit-scrollbar-thumb:hover {
+  background: #a0aec0;
+}
+
+/* Ensure proper contrast for focus states */
+*:focus {
+  outline: 2px solid #1a365d;
+  outline-offset: 2px;
+}
+
+/* Dark mode focus states */
+body.dark-mode *:focus {
+  outline-color: #2d5a87;
+}
