@@ -94,6 +94,51 @@ cnc-scheduler/
 - `POST /api/employees` - Create new employee
 - `PUT /api/employees/:id` - Update employee
 
+## Scheduling System Implementation Plan
+
+### 🎯 Implementation Phases
+
+#### **Phase 1: Foundation (Database + Core Logic)**
+- **Machine Hierarchy**: Multi-tier machine groups with substitution rules
+  - Parent groups (e.g., "MILL") can accept any sub-group jobs
+  - Explicit machine routing prevents substitution
+- **Enhanced Scheduling Tables**: 15-minute time slot granularity
+- **Backward Scheduling Algorithm**: 28-day lead time optimization
+- **Priority Scoring System**: Overdue jobs + customer frequency weighting
+
+#### **Phase 2: Scheduling Engine**
+- **Auto-Scheduler**: Sequential operation constraints (no parallel ops)
+- **Machine + Operator Pairing**: Best-fit selection with availability checking
+- **Conflict Resolution**: Priority → Created Date → Alphabetical tiebreakers
+- **Employee Availability Integration**: Time-off constraint handling
+
+#### **Phase 3: Dual UI Implementation**
+- **Calendar Grid View**: Weekly/daily with 15-minute increments
+- **Kanban Machine Boards**: Scrollable job queues per machine
+- **Drag-and-Drop Manual Override**: Fine-tune auto-scheduled assignments
+- **Real-time Save**: Immediate persistence of schedule changes
+
+#### **Phase 4: Advanced Features**
+- **Auto-Rescheduling Triggers**: Employee time-off impact handling
+- **Customer Priority Weighting**: Frequent customer preference system
+- **Schedule Optimization**: Continuous improvement suggestions
+- **JobBoss Integration**: One-way CSV import data flow
+
+### 🔧 Technical Requirements
+
+#### **Scheduling Constraints**
+- **No Job Overlap**: Sequential scheduling with priority-based queuing
+- **Machine Substitution**: Group-level flexibility with tier restrictions
+- **Operator Exclusivity**: One machine per operator at any time
+- **Route Sequencing**: Strict operation order enforcement
+- **Employee Availability**: Time-off entries trigger rescheduling
+
+#### **Business Logic**
+- **Lead Time**: 28-day backward scheduling from promised date
+- **Priority Algorithm**: Due date + customer frequency + manual priority
+- **Time Granularity**: 15-minute scheduling increments
+- **Conflict Resolution**: Automated tiebreaker hierarchy
+
 ## Contributing
 
 This application is designed specifically for CNC manufacturing operations. When contributing, please consider Lean 6S principles and manufacturing best practices.

@@ -151,7 +151,7 @@ router.post('/', [
         RETURNING *
       `, [
         job_number, customer_name, part_name, part_number, quantity,
-        priority || 5, estimated_hours, due_date, material, material_size,
+        priority || 5, estimated_hours || null, due_date, material, material_size,
         operations, special_instructions, job_boss_data
       ]);
       
@@ -172,7 +172,7 @@ router.post('/', [
             routing.machine_id || null,
             routing.machine_group_id || null,
             routing.sequence_order,
-            routing.estimated_hours || 0,
+            (routing.estimated_hours && routing.estimated_hours !== '') ? parseFloat(routing.estimated_hours) : 0,
             routing.notes || null
           ])
         );
@@ -231,7 +231,7 @@ router.put('/:id', [
     
     const { pool } = req.app.locals;
     const { id } = req.params;
-    const { routings, ...updateFields } = req.body;
+    const { routings, scheduled_count, total_scheduled_hours, updated_at, created_at, id: bodyId, ...updateFields } = req.body;
     
     // Start a transaction
     const client = await pool.connect();
@@ -279,7 +279,7 @@ router.put('/:id', [
               routing.machine_id || null,
               routing.machine_group_id || null,
               routing.sequence_order,
-              routing.estimated_hours || 0,
+              (routing.estimated_hours && routing.estimated_hours !== '') ? parseFloat(routing.estimated_hours) : 0,
               routing.notes || null
             ])
           );
@@ -364,7 +364,7 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
           part_number: row.PartNumber || row.part_number,
           quantity: parseInt(row.Quantity || row.quantity) || 0,
           priority: parseInt(row.Priority || row.priority) || 5,
-          estimated_hours: parseFloat(row.EstimatedHours || row.estimated_hours) || null,
+          estimated_hours: (row.EstimatedHours || row.estimated_hours) ? parseFloat(row.EstimatedHours || row.estimated_hours) : null,
           due_date: row.DueDate || row.due_date,
           material: row.Material || row.material,
           material_size: row.MaterialSize || row.material_size,
@@ -405,7 +405,7 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
               RETURNING *
             `, [
               job.job_number, job.customer_name, job.part_name, job.part_number,
-              job.quantity, job.priority, job.estimated_hours, job.due_date,
+              job.quantity, job.priority, job.estimated_hours || null, job.due_date,
               job.material, job.material_size, job.operations, job.special_instructions,
               job.job_boss_data
             ]);

@@ -164,9 +164,9 @@ const RoutingSelector = ({ value = [], onChange, label = "Operations/Routings" }
   if (loading) {
     return (
       <Box>
-        <Typography variant="body2" color="text.secondary">
+        <div style={{ color: '#666', fontSize: '0.875rem' }}>
           Loading machines and groups...
-        </Typography>
+        </div>
       </Box>
     );
   }
@@ -174,9 +174,9 @@ const RoutingSelector = ({ value = [], onChange, label = "Operations/Routings" }
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-        <Typography variant="subtitle2" gutterBottom>
+        <div style={{ fontWeight: 500, fontSize: '0.875rem', marginBottom: '8px' }}>
           {label}
-        </Typography>
+        </div>
         <Button
           variant="outlined"
           size="small"
@@ -190,9 +190,9 @@ const RoutingSelector = ({ value = [], onChange, label = "Operations/Routings" }
       {/* Current Operations List */}
       {value.length > 0 && (
         <Box sx={{ mb: 3 }}>
-          <Typography variant="body2" color="text.secondary" gutterBottom>
+          <div style={{ color: '#666', fontSize: '0.875rem', marginBottom: '8px' }}>
             Current Operations:
-          </Typography>
+          </div>
           <List dense>
             {value.map((operation, index) => (
               <ListItem
@@ -210,20 +210,20 @@ const RoutingSelector = ({ value = [], onChange, label = "Operations/Routings" }
                 </ListItemIcon>
                 <ListItemText
                   primary={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Chip 
                         label={`OP-${operation.operation_number}`} 
                         size="small" 
                         color="primary" 
                         variant="outlined"
                       />
-                      <Typography variant="body2" fontWeight="medium">
+                      <span style={{ fontWeight: 500 }}>
                         {operation.operation_name}
-                      </Typography>
-                    </Box>
+                      </span>
+                    </div>
                   }
                   secondary={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0.5 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 4 }}>
                       {operation.machine_id && (
                         <Chip
                           icon={<BuildIcon />}
@@ -240,30 +240,34 @@ const RoutingSelector = ({ value = [], onChange, label = "Operations/Routings" }
                           variant="outlined"
                         />
                       )}
-                      <Typography variant="body2" color="text.secondary">
+                      <span style={{ color: '#666' }}>
                         {operation.estimated_hours}h
-                      </Typography>
-                    </Box>
+                      </span>
+                    </div>
                   }
                 />
                 <Box sx={{ display: 'flex', gap: 1 }}>
                   <Tooltip title="Move Up">
-                    <IconButton
-                      size="small"
-                      disabled={index === 0}
-                      onClick={() => moveOperation(index, index - 1)}
-                    >
-                      <ExpandLessIcon />
-                    </IconButton>
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={index === 0}
+                        onClick={() => moveOperation(index, index - 1)}
+                      >
+                        <ExpandLessIcon />
+                      </IconButton>
+                    </span>
                   </Tooltip>
                   <Tooltip title="Move Down">
-                    <IconButton
-                      size="small"
-                      disabled={index === value.length - 1}
-                      onClick={() => moveOperation(index, index + 1)}
-                    >
-                      <ExpandMoreIcon />
-                    </IconButton>
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={index === value.length - 1}
+                        onClick={() => moveOperation(index, index + 1)}
+                      >
+                        <ExpandMoreIcon />
+                      </IconButton>
+                    </span>
                   </Tooltip>
                   <Tooltip title="Edit Operation">
                     <IconButton
@@ -291,14 +295,14 @@ const RoutingSelector = ({ value = [], onChange, label = "Operations/Routings" }
       <Divider sx={{ my: 2 }} />
 
       {/* Available Machines and Groups for Reference */}
-      <Typography variant="subtitle2" gutterBottom>
+      <div style={{ fontWeight: 500, fontSize: '0.875rem', marginBottom: '8px' }}>
         Available Resources
-      </Typography>
+      </div>
       
       {/* Individual Machines */}
-      <Typography variant="body2" color="text.secondary" gutterBottom>
+      <div style={{ color: '#666', fontSize: '0.875rem', marginBottom: '8px' }}>
         Individual Machines
-      </Typography>
+      </div>
       <List dense>
         {machines
           .filter(machine => machine.status === 'active')
@@ -316,9 +320,9 @@ const RoutingSelector = ({ value = [], onChange, label = "Operations/Routings" }
       </List>
 
       {/* Machine Groups */}
-      <Typography variant="body2" color="text.secondary" gutterBottom sx={{ mt: 2 }}>
+      <div style={{ color: '#666', fontSize: '0.875rem', marginBottom: '8px', marginTop: '16px' }}>
         Machine Groups
-      </Typography>
+      </div>
       <List dense>
         {machineGroups.map((group) => {
           const isExpanded = expandedGroups[group.id];

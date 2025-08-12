@@ -31,6 +31,7 @@ import ScheduleView from './pages/ScheduleView';
 import EmployeeDirectory from './pages/EmployeeDirectory';
 import MachineDirectory from './pages/MachineDirectory';
 import OperatorSchedule from './pages/OperatorSchedule';
+import Scheduling from './pages/Scheduling';
 import Logo from './components/Logo';
 
 const drawerWidth = 240;
@@ -38,6 +39,7 @@ const drawerWidth = 240;
 const menuItems = [
   { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
   { text: 'Job Management', icon: <WorkIcon />, path: '/jobs' },
+  { text: 'Scheduling', icon: <ScheduleIcon />, path: '/scheduling' },
   { text: 'Schedule View', icon: <ScheduleIcon />, path: '/schedule' },
   { text: 'Employee Directory', icon: <PeopleIcon />, path: '/employees' },
   { text: 'Operator Schedule', icon: <VisibilityIcon />, path: '/operator-schedule' },
@@ -206,6 +208,7 @@ function App() {
         <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/jobs" element={<JobManagement />} />
+            <Route path="/scheduling" element={<Scheduling />} />
             <Route path="/schedule" element={<ScheduleView />} />
             <Route path="/employees" element={<EmployeeDirectory />} />
             <Route path="/operator-schedule" element={<OperatorSchedule />} />

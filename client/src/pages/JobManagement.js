@@ -678,7 +678,11 @@ const JobManagement = () => {
                     <strong>Status:</strong> {selectedJob.status}
                   </Typography>
                   <Typography variant="body2">
-                    <strong>Estimated Hours:</strong> {selectedJob.estimated_hours || 'Not set'}
+                    <strong>Estimated Hours:</strong> {
+                      selectedJob.routings && selectedJob.routings.length > 0
+                        ? selectedJob.routings.reduce((total, routing) => total + (parseFloat(routing.estimated_hours) || 0), 0).toFixed(2) + 'h'
+                        : selectedJob.estimated_hours || 'Not set'
+                    }
                   </Typography>
                 </Grid>
                 {selectedJob.routings && selectedJob.routings.length > 0 && (
