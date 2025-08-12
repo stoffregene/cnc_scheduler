@@ -431,4 +431,26 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
   }
 });
 
+// Get job routings for sequence validation
+router.get('/:id/routings', async (req, res) => {
+  try {
+    const { pool } = req.app.locals;
+    const { id } = req.params;
+    
+    const result = await pool.query(`
+      SELECT 
+        jr.id, jr.operation_number, jr.operation_name, jr.machine_id,
+        jr.machine_group_id, jr.sequence_order, jr.estimated_hours, jr.notes
+      FROM job_routings jr
+      WHERE jr.job_id = $1
+      ORDER BY jr.sequence_order, jr.operation_number
+    `, [id]);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching job routings:', error);
+    res.status(500).json({ error: 'Failed to fetch job routings' });
+  }
+});
+
 module.exports = router;

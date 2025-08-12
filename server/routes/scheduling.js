@@ -11,7 +11,7 @@ const getSchedulingService = (req) => {
 router.get('/slots', async (req, res) => {
   try {
     const { pool } = req.app.locals;
-    const { start_date, end_date, machine_id, employee_id } = req.query;
+    const { start_date, end_date, machine_id, employee_id, job_id } = req.query;
     
     let query = `
       SELECT 
@@ -56,6 +56,12 @@ router.get('/slots', async (req, res) => {
       paramCount++;
       query += ` AND ss.employee_id = $${paramCount}`;
       params.push(employee_id);
+    }
+    
+    if (job_id) {
+      paramCount++;
+      query += ` AND ss.job_id = $${paramCount}`;
+      params.push(job_id);
     }
     
     query += ` ORDER BY ss.start_datetime ASC`;
@@ -299,10 +305,86 @@ router.put('/parameters/:name', async (req, res) => {
   }
 });
 
+// Unschedule and reschedule a job with correct machine assignments
+router.post('/reschedule-job/:id', async (req, res) => {
+  try {
+    const jobId = req.params.id;
+    const schedulingService = getSchedulingService(req);
+    
+    console.log(`Unscheduling and rescheduling job ${jobId}...`);
+    
+    // Force reschedule (this will clear existing schedule and create new one)
+    const result = await schedulingService.scheduleJob(jobId, true);
+    
+    if (result.success) {
+      res.json({
+        success: true,
+        message: `Job ${jobId} has been rescheduled successfully`,
+        ...result
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        error: result.error || 'Failed to reschedule job'
+      });
+    }
+  } catch (error) {
+    console.error('Error rescheduling job:', error);
+    res.status(500).json({ 
+      success: false,
+      error: `Failed to reschedule job: ${error.message}` 
+    });
+  }
+});
+
+// Unschedule a job (clear all schedule slots)
+router.delete('/unschedule-job/:id', async (req, res) => {
+  try {
+    const { pool } = req.app.locals;
+    const jobId = req.params.id;
+    
+    console.log(`Unscheduling job ${jobId}...`);
+    
+    // Delete all schedule slots for this job
+    const deleteResult = await pool.query(`
+      DELETE FROM schedule_slots 
+      WHERE job_id = $1 
+      RETURNING id
+    `, [jobId]);
+    
+    // Update job status
+    const updateResult = await pool.query(`
+      UPDATE jobs 
+      SET 
+        auto_scheduled = false,
+        status = 'pending',
+        start_date = NULL,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING job_number
+    `, [jobId]);
+    
+    if (updateResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    
+    res.json({
+      success: true,
+      message: `Job ${updateResult.rows[0].job_number} has been unscheduled`,
+      slots_removed: deleteResult.rows.length,
+      job_number: updateResult.rows[0].job_number
+    });
+    
+  } catch (error) {
+    console.error('Error unscheduling job:', error);
+    res.status(500).json({ error: 'Failed to unschedule job' });
+  }
+});
+
 // Get available time slots for manual scheduling
 router.get('/available-slots', async (req, res) => {
   try {
-    const { machine_id, employee_id, duration_minutes, start_date } = req.query;
+    const { machine_id, employee_id, duration_minutes, start_date, exclude_job_id } = req.query;
     
     if (!machine_id || !employee_id || !duration_minutes || !start_date) {
       return res.status(400).json({ error: 'Missing required parameters' });
@@ -313,7 +395,8 @@ router.get('/available-slots', async (req, res) => {
       parseInt(machine_id),
       parseInt(employee_id),
       parseInt(duration_minutes),
-      new Date(start_date)
+      new Date(start_date),
+      exclude_job_id ? parseInt(exclude_job_id) : null
     );
     
     res.json(slots);

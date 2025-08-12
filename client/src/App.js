@@ -28,6 +28,7 @@ import { Routes, Route, useLocation } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import JobManagement from './pages/JobManagement';
 import ScheduleView from './pages/ScheduleView';
+import MachineQueues from './pages/MachineQueues';
 import EmployeeDirectory from './pages/EmployeeDirectory';
 import MachineDirectory from './pages/MachineDirectory';
 import OperatorSchedule from './pages/OperatorSchedule';
@@ -41,6 +42,7 @@ const menuItems = [
   { text: 'Job Management', icon: <WorkIcon />, path: '/jobs' },
   { text: 'Scheduling', icon: <ScheduleIcon />, path: '/scheduling' },
   { text: 'Schedule View', icon: <ScheduleIcon />, path: '/schedule' },
+  { text: 'Machine Queues', icon: <BuildIcon />, path: '/machine-queues' },
   { text: 'Employee Directory', icon: <PeopleIcon />, path: '/employees' },
   { text: 'Operator Schedule', icon: <VisibilityIcon />, path: '/operator-schedule' },
   { text: 'Machine Directory', icon: <BuildIcon />, path: '/machines' },
@@ -210,6 +212,7 @@ function App() {
             <Route path="/jobs" element={<JobManagement />} />
             <Route path="/scheduling" element={<Scheduling />} />
             <Route path="/schedule" element={<ScheduleView />} />
+            <Route path="/machine-queues" element={<MachineQueues />} />
             <Route path="/employees" element={<EmployeeDirectory />} />
             <Route path="/operator-schedule" element={<OperatorSchedule />} />
             <Route path="/machines" element={<MachineDirectory />} />

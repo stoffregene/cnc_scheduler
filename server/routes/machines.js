@@ -702,4 +702,33 @@ router.delete('/operators/:id', async (req, res) => {
   }
 });
 
+// Get qualified operators for a machine
+router.get('/:id/operators', async (req, res) => {
+  try {
+    const { pool } = req.app.locals;
+    const machineId = req.params.id;
+    
+    const result = await pool.query(`
+      SELECT 
+        e.id as employee_id,
+        e.first_name || ' ' || e.last_name as employee_name,
+        e.first_name,
+        e.last_name,
+        oma.proficiency_level,
+        oma.certification_date,
+        e.status as employee_status
+      FROM employees e
+      JOIN operator_machine_assignments oma ON e.id = oma.employee_id
+      WHERE oma.machine_id = $1
+      AND e.status = 'active'
+      ORDER BY oma.proficiency_level DESC, e.id
+    `, [machineId]);
+    
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching machine operators:', error);
+    res.status(500).json({ error: 'Failed to fetch machine operators' });
+  }
+});
+
 module.exports = router;
