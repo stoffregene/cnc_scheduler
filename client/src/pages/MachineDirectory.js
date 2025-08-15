@@ -40,6 +40,8 @@ import {
   TableHead,
   TableRow,
   Paper,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -95,6 +97,8 @@ const MachineDirectory = () => {
     location: '',
     notes: '',
     status: 'active',
+    efficiency_modifier: 1.00,
+    assignToAllEmployees: false,
   });
   const [groupFormData, setGroupFormData] = useState({
     name: '',
@@ -104,6 +108,7 @@ const MachineDirectory = () => {
     employee_id: '',
     machine_id: '',
     proficiency_level: 'trained',
+    preference_rank: 1,
     training_date: null,
     notes: '',
   });
@@ -147,6 +152,7 @@ const MachineDirectory = () => {
         ...machine,
         machine_group_ids: machine.groups ? machine.groups.map(g => g.id) : [],
         capabilities: machine.capabilities || [],
+        efficiency_modifier: machine.efficiency_modifier || 1.00,
       });
     } else {
       setEditingMachine(null);
@@ -162,6 +168,8 @@ const MachineDirectory = () => {
         location: '',
         notes: '',
         status: 'active',
+        efficiency_modifier: 1.00,
+        assignToAllEmployees: false,
       });
     }
     setDialogOpen(true);
@@ -186,18 +194,91 @@ const MachineDirectory = () => {
 
   const handleSubmit = async () => {
     try {
+      // Clean and validate form data before sending
+      // Filter out database-only fields that shouldn't be sent in updates
+      const { id, created_at, updated_at, groups, active_schedules, total_scheduled_hours, assignToAllEmployees, ...cleanFormData } = formData;
+      
+      const cleanedFormData = {
+        ...cleanFormData,
+        // Convert empty strings to null for optional fields
+        max_workpiece_size: cleanFormData.max_workpiece_size || null,
+        location: cleanFormData.location || null,
+        notes: cleanFormData.notes || null,
+        // Ensure machine_group_ids is an array
+        machine_group_ids: Array.isArray(cleanFormData.machine_group_ids) ? cleanFormData.machine_group_ids : [],
+        // Ensure capabilities is an array
+        capabilities: Array.isArray(cleanFormData.capabilities) ? cleanFormData.capabilities : [],
+      };
+      
+      console.log('Sending machine update data:', cleanedFormData);
+      
+      let machineResult;
       if (editingMachine) {
-        await apiService.machines.update(editingMachine.id, formData);
+        machineResult = await apiService.machines.update(editingMachine.id, cleanedFormData);
         toast.success('Machine updated successfully');
       } else {
-        await apiService.machines.create(formData);
+        machineResult = await apiService.machines.create(cleanedFormData);
         toast.success('Machine created successfully');
       }
+      
+      // Handle "Assign to All Employees" if checked
+      if (assignToAllEmployees) {
+        const machineId = editingMachine ? editingMachine.id : machineResult.data.id;
+        await assignAllEmployeesToMachine(machineId);
+      }
+      
       setDialogOpen(false);
       fetchData();
     } catch (error) {
       console.error('Error saving machine:', error);
-      toast.error('Failed to save machine');
+      
+      // Provide more specific error messages
+      if (error.response && error.response.data && error.response.data.error) {
+        toast.error(error.response.data.error);
+      } else if (error.message) {
+        toast.error(`Failed to save machine: ${error.message}`);
+      } else {
+        toast.error('Failed to save machine');
+      }
+    }
+  };
+
+  const assignAllEmployeesToMachine = async (machineId) => {
+    try {
+      toast.loading('Assigning all employees to machine...', { id: 'assign-all' });
+      
+      const activeEmployees = employees.filter(emp => emp.status === 'active');
+      let successCount = 0;
+      let skipCount = 0;
+      
+      for (const employee of activeEmployees) {
+        try {
+          await apiService.post('/api/machines/operators', {
+            employee_id: employee.id,
+            machine_id: machineId,
+            proficiency_level: 'trained',
+            preference_rank: 5, // Default middle rank
+            notes: 'Auto-assigned via "All Employees" option'
+          });
+          successCount++;
+        } catch (error) {
+          // Skip if already assigned (conflict error)
+          if (error.response && error.response.status === 400) {
+            skipCount++;
+          } else {
+            console.error(`Failed to assign ${employee.first_name} ${employee.last_name}:`, error);
+          }
+        }
+      }
+      
+      toast.success(
+        `✅ Assigned ${successCount} employees to machine${skipCount > 0 ? ` (${skipCount} already assigned)` : ''}`,
+        { id: 'assign-all', duration: 4000 }
+      );
+      
+    } catch (error) {
+      console.error('Error assigning all employees:', error);
+      toast.error('Failed to assign all employees to machine', { id: 'assign-all' });
     }
   };
 
@@ -224,6 +305,7 @@ const MachineDirectory = () => {
       employee_id: '',
       machine_id: machine.id,
       proficiency_level: 'trained',
+      preference_rank: 1,
       training_date: null,
       notes: '',
     });
@@ -253,6 +335,7 @@ const MachineDirectory = () => {
         employee_id: '',
         machine_id: selectedMachine.id,
         proficiency_level: 'trained',
+        preference_rank: 1,
         training_date: null,
         notes: '',
       });
@@ -378,6 +461,28 @@ const MachineDirectory = () => {
             <Typography variant="body2" display="flex" alignItems="center" mb={1}>
               <StorageIcon sx={{ mr: 1, fontSize: 16 }} />
               Tool Capacity: {machine.tool_capacity}
+            </Typography>
+          )}
+          {machine.efficiency_modifier && machine.efficiency_modifier !== 1.00 && (
+            <Typography variant="body2" display="flex" alignItems="center" mb={1}>
+              <SpeedIcon sx={{ mr: 1, fontSize: 16 }} />
+              Efficiency: {machine.efficiency_modifier}x
+              {machine.efficiency_modifier > 1.0 && (
+                <Chip 
+                  label={`+${((machine.efficiency_modifier - 1) * 100).toFixed(0)}%`} 
+                  size="small" 
+                  color="success" 
+                  sx={{ ml: 1 }}
+                />
+              )}
+              {machine.efficiency_modifier < 1.0 && (
+                <Chip 
+                  label={`${((machine.efficiency_modifier - 1) * 100).toFixed(0)}%`} 
+                  size="small" 
+                  color="warning" 
+                  sx={{ ml: 1 }}
+                />
+              )}
             </Typography>
           )}
         </Box>
@@ -700,6 +805,39 @@ const MachineDirectory = () => {
                 onChange={(e) => setFormData({ ...formData, location: e.target.value })}
               />
             </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Efficiency Modifier"
+                type="number"
+                inputProps={{ min: 0.01, max: 2.00, step: 0.01 }}
+                value={formData.efficiency_modifier}
+                onChange={(e) => setFormData({ ...formData, efficiency_modifier: parseFloat(e.target.value) || 1.00 })}
+                helperText="Machine efficiency multiplier (1.00 = normal, 1.20 = 20% more efficient)"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={formData.assignToAllEmployees}
+                    onChange={(e) => setFormData({ ...formData, assignToAllEmployees: e.target.checked })}
+                    color="primary"
+                  />
+                }
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <GroupIcon fontSize="small" />
+                    <Typography>
+                      Assign ALL EMPLOYEES to this machine
+                      <Typography variant="caption" display="block" sx={{ color: 'text.secondary' }}>
+                        This will automatically create operator assignments for all active employees
+                      </Typography>
+                    </Typography>
+                  </Box>
+                }
+              />
+            </Grid>
             <Grid item xs={12}>
               <FormControl fullWidth>
                 <InputLabel>Capabilities</InputLabel>
@@ -825,7 +963,7 @@ const MachineDirectory = () => {
                   </Select>
                 </FormControl>
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12} sm={4}>
                 <FormControl fullWidth>
                   <InputLabel>Proficiency Level</InputLabel>
                   <Select
@@ -835,6 +973,21 @@ const MachineDirectory = () => {
                     <MenuItem value="trained">Trained</MenuItem>
                     <MenuItem value="expert">Expert</MenuItem>
                     <MenuItem value="certified">Certified</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <FormControl fullWidth>
+                  <InputLabel>Preference Rank</InputLabel>
+                  <Select
+                    value={operatorFormData.preference_rank}
+                    onChange={(e) => setOperatorFormData({ ...operatorFormData, preference_rank: parseInt(e.target.value, 10) })}
+                  >
+                    <MenuItem value={1}>1st Choice</MenuItem>
+                    <MenuItem value={2}>2nd Choice</MenuItem>
+                    <MenuItem value={3}>3rd Choice</MenuItem>
+                    <MenuItem value={4}>4th Choice</MenuItem>
+                    <MenuItem value={5}>5th Choice</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -877,13 +1030,20 @@ const MachineDirectory = () => {
                             <Typography variant="body2">
                               ID: {operator.employee_id} • {operator.position}
                             </Typography>
-                            <Chip 
-                              label={operator.proficiency_level} 
-                              size="small" 
-                              color={operator.proficiency_level === 'certified' ? 'success' : 
-                                     operator.proficiency_level === 'expert' ? 'primary' : 'default'}
-                              sx={{ mt: 0.5 }}
-                            />
+                            <Box sx={{ display: 'flex', gap: 1, mt: 0.5 }}>
+                              <Chip 
+                                label={`${operator.preference_rank}${operator.preference_rank === 1 ? 'st' : operator.preference_rank === 2 ? 'nd' : operator.preference_rank === 3 ? 'rd' : 'th'} Choice`}
+                                size="small" 
+                                color="secondary"
+                                variant="outlined"
+                              />
+                              <Chip 
+                                label={operator.proficiency_level} 
+                                size="small" 
+                                color={operator.proficiency_level === 'certified' ? 'success' : 
+                                       operator.proficiency_level === 'expert' ? 'primary' : 'default'}
+                              />
+                            </Box>
                             {operator.training_date && (
                               <Typography variant="caption" display="block">
                                 Trained: {format(parseISO(operator.training_date), 'MMM dd, yyyy')}

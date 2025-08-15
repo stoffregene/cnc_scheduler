@@ -1,5 +1,6 @@
 const express = require('express');
 const SchedulingService = require('../services/schedulingService');
+const ConflictPreventionService = require('../services/conflictPreventionService');
 const router = express.Router();
 
 // Get scheduling service instance
@@ -128,6 +129,53 @@ router.get('/machine-workload', async (req, res) => {
   }
 });
 
+// Create a new schedule slot
+router.post('/slots', async (req, res) => {
+  try {
+    const { pool } = req.app.locals;
+    const {
+      job_id,
+      job_routing_id,
+      machine_id,
+      employee_id,
+      start_datetime,
+      end_datetime,
+      duration_minutes,
+      slot_date,
+      time_slot,
+      status,
+      scheduling_method,
+      priority_score,
+      sequence_order,
+      notes
+    } = req.body;
+    
+    const result = await pool.query(`
+      INSERT INTO schedule_slots (
+        job_id, job_routing_id, machine_id, employee_id,
+        start_datetime, end_datetime, duration_minutes,
+        slot_date, time_slot, status, scheduling_method,
+        priority_score, sequence_order, notes, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      RETURNING *
+    `, [
+      job_id, job_routing_id, machine_id, employee_id,
+      start_datetime, end_datetime, duration_minutes,
+      slot_date, time_slot, status, scheduling_method,
+      priority_score, sequence_order, notes
+    ]);
+    
+    if (result.rows.length === 0) {
+      return res.status(500).json({ error: 'Failed to create schedule slot' });
+    }
+    
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    console.error('Error creating schedule slot:', error);
+    res.status(500).json({ error: 'Failed to create schedule slot' });
+  }
+});
+
 // Schedule a specific job
 router.post('/schedule-job/:id', async (req, res) => {
   try {
@@ -174,8 +222,56 @@ router.put('/slots/:id', async (req, res) => {
       end_datetime,
       machine_id,
       employee_id,
-      notes
+      notes,
+      bypass_validation
     } = req.body;
+    
+    // Get current slot details for validation
+    const currentSlotQuery = await pool.query(
+      'SELECT job_id, job_routing_id FROM schedule_slots WHERE id = $1',
+      [slotId]
+    );
+    
+    if (currentSlotQuery.rows.length === 0) {
+      return res.status(404).json({ error: 'Schedule slot not found' });
+    }
+    
+    const currentSlot = currentSlotQuery.rows[0];
+    
+    // VALIDATE PROPOSED MOVE BEFORE APPLYING (unless bypassed)
+    if (!bypass_validation) {
+      const conflictPrevention = new ConflictPreventionService(pool);
+      const proposedSlot = {
+        job_id: currentSlot.job_id,
+        job_routing_id: currentSlot.job_routing_id,
+        machine_id: parseInt(machine_id),
+        employee_id: parseInt(employee_id),
+        start_datetime: new Date(start_datetime),
+        end_datetime: new Date(end_datetime),
+        excludeSlotId: parseInt(slotId) // Exclude current slot from conflict checks
+      };
+      
+      console.log(`🔍 Validating drag-and-drop move for slot ${slotId}:`, proposedSlot);
+      
+      const validation = await conflictPrevention.validateProposedSlot(proposedSlot);
+      
+      if (!validation.isValid) {
+        console.log(`❌ Drag-and-drop validation failed:`, validation.conflicts);
+        
+        // Return validation errors to frontend for user decision
+        return res.status(400).json({
+          error: 'Scheduling conflicts detected',
+          conflicts: validation.conflicts,
+          warnings: validation.warnings,
+          suggestions: validation.suggestions,
+          canProceed: validation.canProceed
+        });
+      }
+    } else {
+      console.log(`⚠️ Validation bypassed for slot ${slotId} (smart rescheduling)`);
+    }
+    
+    console.log(`✅ Drag-and-drop validation passed for slot ${slotId}`);
     
     // Calculate duration and slot information
     const start = new Date(start_datetime);
@@ -230,6 +326,62 @@ router.delete('/slots/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting schedule slot:', error);
     res.status(500).json({ error: 'Failed to delete schedule slot' });
+  }
+});
+
+// Unschedule all jobs - remove all schedule slots
+router.delete('/unschedule-all', async (req, res) => {
+  try {
+    const { pool } = req.app.locals;
+    
+    console.log('🗑️ Unscheduling all jobs - removing all schedule slots');
+    
+    // Start transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Get count before deletion
+      const countResult = await client.query('SELECT COUNT(*) as count FROM schedule_slots');
+      const totalSlots = parseInt(countResult.rows[0].count);
+      
+      // Delete all schedule slots
+      await client.query('DELETE FROM schedule_slots');
+      
+      // Reset auto_scheduled flag and status on all jobs that had schedules
+      const jobsResult = await client.query(`
+        UPDATE jobs 
+        SET auto_scheduled = FALSE, 
+            status = CASE 
+              WHEN status = 'scheduled' THEN 'pending'
+              ELSE status 
+            END,
+            updated_at = CURRENT_TIMESTAMP 
+        WHERE auto_scheduled = TRUE OR status = 'scheduled'
+        RETURNING id, job_number, status
+      `);
+      
+      await client.query('COMMIT');
+      
+      console.log(`✅ Unscheduled all jobs: ${totalSlots} slots removed, ${jobsResult.rows.length} jobs reset`);
+      
+      res.json({
+        message: `Successfully unscheduled all jobs`,
+        totalSlotsRemoved: totalSlots,
+        jobsReset: jobsResult.rows.length,
+        resetJobs: jobsResult.rows.map(j => j.job_number)
+      });
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    
+  } catch (error) {
+    console.error('Error unscheduling all jobs:', error);
+    res.status(500).json({ error: 'Failed to unschedule all jobs' });
   }
 });
 
@@ -309,12 +461,19 @@ router.put('/parameters/:name', async (req, res) => {
 router.post('/reschedule-job/:id', async (req, res) => {
   try {
     const jobId = req.params.id;
+    const { force_start_date, partial, startFromOperation } = req.body;
     const schedulingService = getSchedulingService(req);
     
     console.log(`Unscheduling and rescheduling job ${jobId}...`);
+    if (force_start_date) {
+      console.log(`Using forced start date: ${force_start_date}`);
+    }
+    if (partial) {
+      console.log(`Partial reschedule starting from operation sequence ${startFromOperation}`);
+    }
     
     // Force reschedule (this will clear existing schedule and create new one)
-    const result = await schedulingService.scheduleJob(jobId, true);
+    const result = await schedulingService.scheduleJob(jobId, true, force_start_date, partial, startFromOperation);
     
     if (result.success) {
       res.json({

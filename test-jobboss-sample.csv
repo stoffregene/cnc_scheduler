@@ -1,0 +1,12 @@
+Job,Customer,Part Description,Est_Required_Qty,AMT Workcenter & Vendor,Sequence,Vendor,Lead_Days,Order_Date,Promised_Date,Est Total Hours,Link_Material,Status,Material,Material Lead Days,Material Due_Date,Material_Req,Status
+12345,ACME Corp,Widget Assembly,10,SAW-001,10,,0,2025-08-01,2025-08-25,2.5,TRUE,Active,6061 Aluminum,7,2025-08-10,MAT-001,O
+12345,ACME Corp,Widget Assembly,10,HMC-002,20,,0,2025-08-01,2025-08-25,5.0,TRUE,Active,6061 Aluminum,7,2025-08-10,MAT-001,O
+12345,ACME Corp,Widget Assembly,10,INSPECT,30,,0,2025-08-01,2025-08-25,0.5,TRUE,Active,6061 Aluminum,7,2025-08-10,MAT-001,O
+12345-1,ACME Corp,Widget Component A,10,SAW-001,10,,0,2025-08-01,2025-08-20,1.5,FALSE,Active,Steel Bar,5,2025-08-08,MAT-002,O
+12345-1,ACME Corp,Widget Component A,10,MILL-003,20,,0,2025-08-01,2025-08-20,3.0,FALSE,Active,Steel Bar,5,2025-08-08,MAT-002,O
+12345-2,ACME Corp,Widget Component B,10,SAW-002,10,,0,2025-08-01,2025-08-22,2.0,FALSE,Active,Stainless,3,2025-08-07,MAT-003,O
+12345-2,ACME Corp,Widget Component B,10,External Plating,20,External Plating,5,2025-08-01,2025-08-22,0,FALSE,Active,Stainless,3,2025-08-07,MAT-003,O
+12345-2,ACME Corp,Widget Component B,10,INSPECT,30,,0,2025-08-01,2025-08-22,0.5,FALSE,Active,Stainless,3,2025-08-07,MAT-003,O
+67890,TechCorp,Control Panel,5,PUNCH-001,10,,0,2025-08-05,2025-09-01,4.0,TRUE,Active,Sheet Metal,10,2025-08-15,MAT-004,O
+67890,TechCorp,Control Panel,5,WELD-001,20,,0,2025-08-05,2025-09-01,6.0,TRUE,Active,Sheet Metal,10,2025-08-15,MAT-004,O
+67890,TechCorp,Control Panel,5,Paint Shop,30,Paint Shop,3,2025-08-05,2025-09-01,0,TRUE,Active,Sheet Metal,10,2025-08-15,MAT-004,O

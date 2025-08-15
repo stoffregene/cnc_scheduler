@@ -127,18 +127,26 @@ Operations use `sequence_order` field in `job_routings` table:
 
 ## Recent Fixes & Improvements
 
-### Drag-and-Drop Enhancements:
-1. **Employee Assignment Logic**: Preserves employees for same-machine moves, auto-assigns qualified operators for cross-machine moves
-2. **Validation Dialogs**: User-friendly confirmation dialogs for invalid moves with auto-reschedule options
-3. **Optimal Time Placement**: Uses available-slots API for intelligent scheduling instead of arbitrary defaults
-4. **Sequence Enforcement**: Prevents operations from being scheduled out of order
+### Manual Rescheduling System ✅ COMPLETED:
+1. **Drag-and-Drop Removed**: Eliminated complex drag-and-drop interface per user feedback that it was "almost useless"
+2. **Enhanced Manual Rescheduling**: Added comprehensive date picker with machine selection capabilities
+3. **Smart Machine Filtering**: INSPECT operations only show INSPECT machines, production operations exclude INSPECT machines
+4. **Machine Swapping**: Full capability to change operation machines with automatic operator reassignment
+5. **Trickle-Down Scheduling**: Automatically reschedules all subsequent operations when moving any operation
+6. **Visual Summary Modal**: Shows detailed summary of what operations were moved and where
 
-### Critical Schedule Fix ✅ RESOLVED:
-**ISSUE**: Scheduler was using incorrect employee work hours (8 AM - 5 PM for everyone) instead of actual schedules.
-- **Root Cause**: Database function `get_employee_working_hours()` wasn't checking the correct `employee_work_schedules` table
-- **Impact**: Jobs were scheduled outside operators' actual work hours
-- **Solution**: Updated database function to prioritize `employee_work_schedules` table data
-- **Result**: Scheduler now uses accurate hours (e.g., Drew: 4:30 AM - 3 PM, Kyle: 6 AM - 4:30 PM)
+### Critical Schedule Fixes ✅ RESOLVED:
+
+**1. Employee Work Hours Fix**:
+- **Issue**: Scheduler using default 8 AM - 5 PM instead of actual schedules
+- **Solution**: Fixed database function to prioritize `employee_work_schedules` table
+- **Result**: Now uses accurate hours (e.g., Drew: 4:30 AM - 3 PM, Kyle: 6 AM - 4:30 PM)
+
+**2. SAW/Waterjet 24-Hour Lag Time Fix**:
+- **Issue**: HMC operations couldn't be scheduled after SAW due to validation conflicts
+- **Solution**: Fixed slot generation to respect minimum start time within shifts
+- **Technical Fix**: Changed from `$3::date + interval` to `$3::timestamp + interval` in query
+- **Result**: Properly enforces 24-hour minimum lag while allowing flexible scheduling
 
 ### Bug Fixes:
 - Fixed `daysInView` variable scope issues in drag handlers
@@ -165,7 +173,7 @@ Operations use `sequence_order` field in `job_routings` table:
 - Component-based React architecture
 - Material-UI for consistent styling
 - Custom hooks for data fetching and state management
-- Drag-and-drop with @dnd-kit library
+- Manual rescheduling system with date picker and machine selection
 
 ### Backend:
 - RESTful API design
@@ -174,11 +182,11 @@ Operations use `sequence_order` field in `job_routings` table:
 - Comprehensive error handling and logging
 
 ### Data Flow:
-1. User interacts with drag-and-drop interface
-2. Frontend validates move and calls appropriate API
-3. Backend performs business logic validation
+1. User interacts with manual rescheduling controls in modal interface
+2. Frontend validates date and machine selection
+3. Backend performs business logic validation and machine swapping
 4. Database updates with proper transaction handling
-5. Frontend refreshes data and updates UI
+5. Frontend refreshes data and shows summary modal
 
 ## Security Considerations
 - Input validation on all endpoints
@@ -212,8 +220,27 @@ node server/fix-working-hours-function.js
 - `fix-working-hours-function.js` - Repair schedule function
 - `check-sequence-schema.js` - Validate operation sequence data
 
+## Current Todo List Status ✅ ALL COMPLETED
+
+### Recently Completed Tasks:
+1. ✅ **Manual Rescheduling Date Picker** - Added comprehensive date picker to job detail modal
+2. ✅ **Trickle-Down Rescheduling** - Implemented automatic rescheduling of subsequent operations
+3. ✅ **Employee Schedule Validation** - Fixed and validated operator working hours integration
+4. ✅ **Chunk Handling** - Fixed manual rescheduling to move ALL chunks of multi-day operations
+5. ✅ **Dependent Operations** - Ensured INSPECT and subsequent operations get rescheduled properly
+6. ✅ **Date Validation** - Fixed timezone issues and employee work day validation
+7. ✅ **Visual Summary** - Added summary modal showing what operations were moved where
+8. ✅ **Forward vs Backward Scheduling** - Implemented smart scheduling direction based on operation sequence
+9. ✅ **Partial vs Full Reschedule** - Smart logic to only reschedule current + subsequent operations
+10. ✅ **Drag-and-Drop Removal** - Completely removed drag-and-drop functionality per user feedback
+11. ✅ **Machine Selection Enhancement** - Added machine/machine group selection to manual rescheduling
+12. ✅ **Machine Swapping Capability** - Full support for changing operation machines with operator reassignment
+
+### Outstanding Issues to Fix:
+- **Partial Reschedule Bug**: When rescheduling later operations (HMC, INSPECT), the system says "Job already scheduled" because SAW operation still exists. Need to improve the scheduling service to handle partial reschedules properly.
+
 ---
 
-*Last Updated: August 12, 2025*
+*Last Updated: August 14, 2025*
 *Current Phase: Phase 3 - Advanced Features*
-*Next Milestone: Collision Detection & Employee Workload Visualization*
+*Next Milestone: Fix partial reschedule bug and add collision detection*

@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
-  Grid,
   Card,
   CardContent,
   Typography,
@@ -17,8 +16,7 @@ import {
   DialogActions,
   IconButton,
   Tooltip,
-  Alert,
-  Snackbar,
+  Divider,
 } from '@mui/material';
 import {
   ChevronLeft as ChevronLeftIcon,
@@ -26,50 +24,317 @@ import {
   Today as TodayIcon,
   ViewWeek as ViewWeekIcon,
   ViewDay as ViewDayIcon,
-  Edit as EditIcon,
   Schedule as ScheduleIcon,
-  Person as PersonIcon,
   Build as BuildIcon,
+  ClearAll as ClearAllIcon,
 } from '@mui/icons-material';
 import { format, addDays, startOfWeek, startOfDay, parseISO, isSameDay } from 'date-fns';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import toast from 'react-hot-toast';
-import {
-  DndContext,
-  DragOverlay,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragStartEvent,
-  DragEndEvent,
-  useDraggable,
-  useDroppable,
-} from '@dnd-kit/core';
-import {
-  restrictToWindowEdges,
-  restrictToVerticalAxis,
-} from '@dnd-kit/modifiers';
 
 import { apiService } from '../services/apiService';
 
-// Draggable Schedule Slot Component
-const DraggableSlot = ({ slot, position, color, children, onClick }) => {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: slot.id,
-  });
+// Manual Reschedule Controls Component
+const ManualRescheduleControls = ({ selectedSlot, onReschedule, machines, machineGroups }) => {
+  const [selectedDate, setSelectedDate] = useState(null);
+  const [selectedMachine, setSelectedMachine] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [availableMachines, setAvailableMachines] = useState([]);
+  const [availableGroups, setAvailableGroups] = useState([]);
 
-  const style = transform ? {
-    transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-    opacity: isDragging ? 0.5 : 1,
-  } : undefined;
+  // No need to fetch machine groups locally - passed as prop
+
+  useEffect(() => {
+    // Filter machines and groups that can perform this operation
+    if (machines && selectedSlot) {
+      const isInspectOperation = selectedSlot.operation_name?.toLowerCase().includes('inspect');
+      
+      let suitableMachines;
+      if (isInspectOperation) {
+        // INSPECT operations can only go to INSPECT machines
+        suitableMachines = machines.filter(m => 
+          m.status === 'active' && 
+          m.name?.toLowerCase().includes('inspect')
+        );
+      } else {
+        // Production operations cannot go to INSPECT machines
+        suitableMachines = machines.filter(m => 
+          m.status === 'active' && 
+          !m.name?.toLowerCase().includes('inspect')
+        );
+      }
+      
+      setAvailableMachines(suitableMachines);
+      
+      // Filter machine groups that have machines suitable for this operation
+      if (machineGroups && machineGroups.length > 0) {
+        const suitableGroups = machineGroups.filter(group => {
+          const groupMachines = suitableMachines.filter(m => 
+            m.groups && m.groups.some(g => g.id === group.id)
+          );
+          return groupMachines.length > 0;
+        });
+        setAvailableGroups(suitableGroups);
+      }
+      
+      // Default to current machine if it's suitable
+      if (suitableMachines.find(m => m.id === selectedSlot.machine_id)) {
+        setSelectedMachine(selectedSlot.machine_id.toString());
+      } else if (suitableMachines.length > 0) {
+        setSelectedMachine(suitableMachines[0].id.toString());
+      }
+    }
+  }, [machines, selectedSlot, machineGroups]);
+
+  if (!selectedSlot || !machines || !machineGroups) return null;
+
+  const currentDate = parseISO(selectedSlot.start_datetime);
+  const currentMachine = machines?.find(m => m.id === selectedSlot.machine_id);
+
+  const handleDateChange = (newDate) => {
+    setSelectedDate(newDate);
+  };
+
+  const handleMachineChange = (event) => {
+    console.log('🔧 Machine selection changed to:', event.target.value);
+    setSelectedMachine(event.target.value);
+  };
+
+  const handleRescheduleClick = async () => {
+    if (!selectedDate) {
+      toast.error('Please select a date first');
+      return;
+    }
+
+    // Validate the selected date
+    if (!(selectedDate instanceof Date) || isNaN(selectedDate.getTime())) {
+      toast.error('Invalid date selected. Please choose a valid date.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // Handle both machine and group selection
+      const rescheduleOptions = {
+        date: selectedDate
+      };
+      
+      if (selectedMachine.startsWith('group-')) {
+        // Machine group selected - extract group ID and let scheduler pick machine
+        rescheduleOptions.machineGroupId = parseInt(selectedMachine.replace('group-', ''));
+        console.log('🏭 Rescheduling to machine group:', rescheduleOptions.machineGroupId);
+      } else {
+        // Individual machine selected
+        rescheduleOptions.machineId = selectedMachine ? parseInt(selectedMachine) : selectedSlot.machine_id;
+        console.log('🔧 Rescheduling to specific machine:', rescheduleOptions.machineId);
+      }
+      
+      await onReschedule(selectedSlot, rescheduleOptions);
+      setSelectedDate(null);
+      setSelectedMachine(selectedSlot.machine_id.toString());
+    } catch (error) {
+      console.error('Error in manual reschedule:', error);
+      toast.error(`Reschedule failed: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const isUsingDifferentMachine = selectedMachine && parseInt(selectedMachine) !== selectedSlot.machine_id;
+  const selectedMachineObj = availableMachines.find(m => m.id === parseInt(selectedMachine));
 
   return (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Typography variant="body2" color="text.secondary">
+        Current: {format(currentDate, 'MMM d, yyyy h:mm a')} on {currentMachine?.name || 'Unknown machine'}
+      </Typography>
+      
+      <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <DatePicker
+          label="New Start Date"
+          value={selectedDate}
+          onChange={handleDateChange}
+          disablePast
+          sx={{ minWidth: 200 }}
+        />
+        
+        <FormControl sx={{ minWidth: 200 }} size="small">
+          <InputLabel>Machine/Group</InputLabel>
+          <Select
+            value={selectedMachine}
+            label="Machine/Group"
+            onChange={handleMachineChange}
+          >
+            {/* Machine Groups Section - Always render available groups */}
+            <MenuItem disabled sx={{ fontWeight: 'bold', bgcolor: 'action.hover' }}>
+              Machine Groups (Auto-Select) - {availableGroups.length} available
+            </MenuItem>
+            {availableGroups.map((group) => (
+              <MenuItem 
+                key={`group-${group.id}`} 
+                value={`group-${group.id}`} 
+                sx={{ flexDirection: 'column', alignItems: 'flex-start' }}
+              >
+                <Typography variant="body2" color="primary">
+                  🏭 {group.name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {group.description} ({group.machine_count} machines)
+                </Typography>
+              </MenuItem>
+            ))}
+            {availableGroups.length > 0 && <Divider />}
+            
+            {/* Show message when no groups are available */}
+            {availableGroups.length === 0 && (
+              <MenuItem disabled sx={{ fontWeight: 'bold', bgcolor: 'warning.light', color: 'warning.dark' }}>
+                ⚠️ No compatible machine groups found for {selectedSlot.operation_name}
+              </MenuItem>
+            )}
+            
+            {/* Individual Machines Section */}
+            <MenuItem disabled sx={{ fontWeight: 'bold', bgcolor: 'action.hover' }}>
+              Specific Machines
+            </MenuItem>
+            {availableMachines.map((machine) => (
+              <MenuItem key={machine.id} value={machine.id.toString()} sx={{ flexDirection: 'column', alignItems: 'flex-start' }}>
+                <Typography variant="body2">
+                  🔧 {machine.name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {machine.model}
+                </Typography>
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        
+        <Button
+          variant="contained"
+          color="secondary"
+          onClick={handleRescheduleClick}
+          disabled={!selectedDate || loading}
+          size="small"
+          sx={{ alignSelf: 'center' }}
+        >
+          {loading ? 'Rescheduling...' : isUsingDifferentMachine ? 'Move & Reschedule' : 'Reschedule Operation'}
+        </Button>
+      </Box>
+      
+      {selectedDate && (
+        <Box>
+          <Typography variant="caption" color="info.main">
+            ⚡ This will move the operation to {format(selectedDate, 'MMM d, yyyy')} 
+            {isUsingDifferentMachine && selectedMachineObj && ` on ${selectedMachineObj.name}`} 
+            and automatically reschedule all subsequent operations.
+          </Typography>
+          {isUsingDifferentMachine && (
+            <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 0.5 }}>
+              🔄 Machine change: The system will automatically assign a qualified operator for the new machine.
+            </Typography>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+};
+
+// Reschedule Summary Modal Component
+const RescheduleSummaryModal = ({ open, onClose, summary }) => {
+  if (!summary) return null;
+
+  return (
+    <Dialog 
+      open={open} 
+      onClose={onClose}
+      maxWidth="md"
+      fullWidth
+      PaperProps={{
+        sx: { 
+          borderRadius: 2,
+          minHeight: '300px'
+        }
+      }}
+    >
+      <DialogTitle sx={{ 
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        color: 'white',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1
+      }}>
+        <ScheduleIcon />
+        Manual Reschedule Summary
+      </DialogTitle>
+      
+      <DialogContent sx={{ pt: 3 }}>
+        <Typography variant="h6" gutterBottom color="success.main">
+          ✅ Primary Operation Moved
+        </Typography>
+        
+        <Card sx={{ mb: 3, p: 2, backgroundColor: 'success.50' }}>
+          <Typography variant="subtitle1" fontWeight="bold">
+            {summary.primaryOperation.operation}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            <strong>From:</strong> {format(new Date(summary.primaryOperation.from), 'MMM d, yyyy h:mm a')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            <strong>To:</strong> {format(new Date(summary.primaryOperation.to), 'MMM d, yyyy h:mm a')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            <strong>Duration:</strong> {summary.primaryOperation.duration} minutes
+            {summary.primaryOperation.chunks > 1 && ` (${summary.primaryOperation.chunks} chunks)`}
+          </Typography>
+          {summary.primaryOperation.machineChange && (
+            <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
+              <strong>Machine changed:</strong> {summary.primaryOperation.machineChange.from} → {summary.primaryOperation.machineChange.to}
+            </Typography>
+          )}
+        </Card>
+
+        {summary.subsequentOperations && summary.subsequentOperations.length > 0 && (
+          <>
+            <Typography variant="h6" gutterBottom color="info.main">
+              🔄 Subsequent Operations Rescheduled
+            </Typography>
+            
+            {summary.subsequentOperations.map((op, index) => (
+              <Card key={index} sx={{ mb: 2, p: 2, backgroundColor: 'info.50' }}>
+                <Typography variant="subtitle2" fontWeight="bold">
+                  {op.operation_name} (Sequence {op.sequence_order})
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Automatically rescheduled by system after {summary.primaryOperation.operation}
+                </Typography>
+              </Card>
+            ))}
+          </>
+        )}
+
+        <Box sx={{ mt: 3, p: 2, backgroundColor: 'grey.100', borderRadius: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            <strong>Total operations affected:</strong> {1 + (summary.subsequentOperations?.length || 0)}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            <strong>Reschedule method:</strong> Manual with automatic trickle-down
+          </Typography>
+        </Box>
+      </DialogContent>
+
+      <DialogActions sx={{ p: 2 }}>
+        <Button onClick={onClose} variant="contained" color="primary">
+          Got it
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+// Schedule Slot Component (simplified, no drag functionality)
+const ScheduleSlot = ({ slot, position, color, children, onClick }) => {
+  return (
     <Box
-      ref={setNodeRef}
-      style={style}
-      {...listeners}
-      {...attributes}
       onClick={onClick}
       sx={{
         position: 'absolute',
@@ -80,7 +345,7 @@ const DraggableSlot = ({ slot, position, color, children, onClick }) => {
         backgroundColor: color,
         borderRadius: '4px',
         border: position.isShort ? '3px solid rgba(255,255,255,0.8)' : '1px solid rgba(255,255,255,0.3)',
-        cursor: isDragging ? 'grabbing' : 'grab',
+        cursor: 'pointer',
         overflow: 'hidden',
         boxShadow: position.isShort ? '0 4px 8px rgba(0,0,0,0.5)' : 'none',
         '&:hover': {
@@ -96,24 +361,16 @@ const DraggableSlot = ({ slot, position, color, children, onClick }) => {
   );
 };
 
-// Droppable Zone Component
-const DroppableZone = ({ machineId, dayIndex, isOver, children }) => {
-  const { isOver: isOverDroppable, setNodeRef } = useDroppable({
-    id: `${machineId}-${dayIndex}`,
-  });
-
+// Schedule Day Zone Component (no drop functionality)
+const ScheduleDayZone = ({ dayIndex, children }) => {
   return (
     <Box
-      ref={setNodeRef}
       sx={{
         flex: 1,
         position: 'relative',
         borderRight: dayIndex < 6 ? '1px solid #e0e0e0' : 'none',
-        backgroundColor: isOverDroppable 
-          ? 'rgba(33, 150, 243, 0.1)' 
-          : isSameDay(new Date(), new Date()) ? '#f8fcff' : 'transparent',
+        backgroundColor: isSameDay(new Date(), new Date()) ? '#f8fcff' : 'transparent',
         minHeight: '80px',
-        border: isOverDroppable ? '2px dashed #2196f3' : 'none',
       }}
     >
       {children}
@@ -121,67 +378,11 @@ const DroppableZone = ({ machineId, dayIndex, isOver, children }) => {
   );
 };
 
-// Validate operation sequence to prevent out-of-order scheduling
-const validateOperationSequence = async (draggedSlot, targetDay) => {
-  try {
-    // Get all operations for this job with their sequence orders
-    const response = await apiService.get(`/api/jobs/${draggedSlot.job_id}/routings`);
-    const jobRoutings = response.data;
-    
-    // Find the current operation being dragged
-    const currentOperation = jobRoutings.find(r => r.id === draggedSlot.job_routing_id);
-    if (!currentOperation) {
-      return { isValid: false, message: 'Unable to find operation details for sequence validation' };
-    }
-    
-    // Get all currently scheduled slots for this job
-    const scheduledResponse = await apiService.get('/api/scheduling/slots', {
-      params: { job_id: draggedSlot.job_id }
-    });
-    const jobSlots = scheduledResponse.data;
-    
-    // Check for sequence violations
-    const targetDateTime = new Date(targetDay);
-    
-    // Find all operations with lower sequence order (should be scheduled before)
-    const prerequisiteOps = jobRoutings.filter(r => r.sequence_order < currentOperation.sequence_order);
-    const subsequentOps = jobRoutings.filter(r => r.sequence_order > currentOperation.sequence_order);
-    
-    // Check if any prerequisite operations are scheduled AFTER the target time
-    for (const prereqOp of prerequisiteOps) {
-      const prereqSlot = jobSlots.find(s => s.job_routing_id === prereqOp.id && s.id !== draggedSlot.id);
-      if (prereqSlot) {
-        const prereqStart = new Date(prereqSlot.start_datetime);
-        if (prereqStart > targetDateTime) {
-          return {
-            isValid: false,
-            message: `Cannot schedule ${currentOperation.operation_name} (sequence ${currentOperation.sequence_order}) before ${prereqOp.operation_name} (sequence ${prereqOp.sequence_order}). Prerequisites must be completed first.`
-          };
-        }
-      }
-    }
-    
-    // Check if any subsequent operations are scheduled BEFORE the target time
-    for (const subOp of subsequentOps) {
-      const subSlot = jobSlots.find(s => s.job_routing_id === subOp.id && s.id !== draggedSlot.id);
-      if (subSlot) {
-        const subStart = new Date(subSlot.start_datetime);
-        if (subStart < targetDateTime) {
-          return {
-            isValid: false,
-            message: `Cannot schedule ${currentOperation.operation_name} (sequence ${currentOperation.sequence_order}) after ${subOp.operation_name} (sequence ${subOp.sequence_order}). Operations must maintain proper sequence order.`
-          };
-        }
-      }
-    }
-    
-    return { isValid: true, message: 'Sequence validation passed' };
-    
-  } catch (error) {
-    console.error('Error validating operation sequence:', error);
-    return { isValid: false, message: 'Unable to validate operation sequence due to error' };
-  }
-};
+
+
+
+
+
 
 const ScheduleView = () => {
   const [loading, setLoading] = useState(true);
@@ -189,25 +390,16 @@ const ScheduleView = () => {
   const [viewMode, setViewMode] = useState('week'); // day, week, month
   const [scheduleSlots, setScheduleSlots] = useState([]);
   const [machines, setMachines] = useState([]);
+  const [machineGroups, setMachineGroups] = useState([]);
   const [selectedSlot, setSelectedSlot] = useState(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
-  const [draggedSlot, setDraggedSlot] = useState(null);
-  const [dragOverZone, setDragOverZone] = useState(null);
-  const [dragMessage, setDragMessage] = useState('');
-
-  // Drag and drop sensors
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8,
-      },
-    }),
-    useSensor(KeyboardSensor)
-  );
+  const [rescheduleSummary, setRescheduleSummary] = useState(null);
+  const [summaryModalOpen, setSummaryModalOpen] = useState(false);
 
   useEffect(() => {
     fetchScheduleData();
     fetchMachines();
+    fetchMachineGroups();
   }, [currentDate, viewMode]);
 
   const fetchScheduleData = async () => {
@@ -238,6 +430,46 @@ const ScheduleView = () => {
       setMachines(response.data);
     } catch (error) {
       console.error('Error fetching machines:', error);
+    }
+  };
+
+  const fetchMachineGroups = async () => {
+    try {
+      const response = await apiService.get('/api/machines/groups/all');
+      setMachineGroups(response.data);
+    } catch (error) {
+      console.error('Error fetching machine groups:', error);
+    }
+  };
+
+  const handleUnscheduleAll = async () => {
+    const confirmed = window.confirm(
+      '⚠️ This will remove ALL scheduled operations from the calendar. This action cannot be undone. Are you sure?'
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      setLoading(true);
+      toast.loading('Unscheduling all jobs...', { id: 'unschedule-all' });
+      
+      const response = await apiService.delete('/api/scheduling/unschedule-all');
+      
+      // Refresh the schedule data
+      await fetchScheduleData();
+      
+      toast.success(
+        `✅ ${response.data.message}\n📊 ${response.data.totalSlotsRemoved} schedule slots removed\n🔄 ${response.data.jobsReset} jobs reset`, 
+        { id: 'unschedule-all', duration: 5000 }
+      );
+      
+      console.log('Unschedule all response:', response.data);
+      
+    } catch (error) {
+      console.error('Error unscheduling all jobs:', error);
+      toast.error('Failed to unschedule all jobs', { id: 'unschedule-all' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -389,214 +621,244 @@ const ScheduleView = () => {
     }
   };
 
-  // Drag and drop handlers
-  const handleDragStart = useCallback((event) => {
-    const { active } = event;
-    const draggedSlot = scheduleSlots.find(slot => slot.id === parseInt(active.id));
-    setDraggedSlot(draggedSlot);
-    setDragMessage(`Moving ${draggedSlot?.job_number} - ${draggedSlot?.operation_name}`);
-  }, [scheduleSlots]);
-
-  const handleDragOver = useCallback((event) => {
-    const { over } = event;
-    if (over) {
-      const [machineId, dayIndex] = over.id.toString().split('-');
-      setDragOverZone({ machineId: parseInt(machineId), dayIndex: parseInt(dayIndex) });
-    } else {
-      setDragOverZone(null);
-    }
-  }, []);
-
-  const handleDragEnd = useCallback(async (event) => {
-    const { active, over } = event;
-    
-    setDraggedSlot(null);
-    setDragOverZone(null);
-    setDragMessage('');
-
-    if (!over || !draggedSlot) return;
-
-    const [targetMachineId, targetDayIndex] = over.id.toString().split('-');
-    const currentDaysInView = getDaysInView();
-    const targetDay = currentDaysInView[parseInt(targetDayIndex)];
-    
-    // Don't allow dropping on the same position
-    if (
-      parseInt(targetMachineId) === draggedSlot.machine_id && 
-      isSameDay(parseISO(draggedSlot.start_datetime), targetDay)
-    ) {
-      return;
-    }
-
+  // Manual reschedule operation to specific date with trickle-down effect
+  const handleManualReschedule = async (selectedSlot, rescheduleOptionsOrDate) => {
     try {
-      // Intelligent validation for operation-machine compatibility
-      const targetMachine = machines.find(m => m.id === parseInt(targetMachineId));
-      const isInspectOperation = draggedSlot.operation_name?.toLowerCase().includes('inspect');
-      const isTargetInspectMachine = targetMachine?.name?.toLowerCase().includes('inspect');
+      // Handle both old (date only) and new (options object) parameter formats
+      let newStartDate, targetMachineId, targetMachineGroupId;
       
-      // Detect incompatible combinations
-      const isIncompatibleMove = 
-        (!isInspectOperation && isTargetInspectMachine && draggedSlot.duration_minutes > 0) || // Production op to INSPECT
-        (isInspectOperation && !isTargetInspectMachine); // INSPECT op to production machine
-      
-      if (isIncompatibleMove) {
-        const operationType = isInspectOperation ? 'INSPECT' : 'production';
-        const machineType = isTargetInspectMachine ? 'INSPECT' : 'production';
-        
-        if (window.confirm(
-          `⚠️ Invalid Assignment Detected!\n\n` +
-          `You're trying to move a ${operationType} operation to a ${machineType} machine.\n` +
-          `This will cause scheduling conflicts.\n\n` +
-          `Would you like to unschedule and reschedule this entire job instead?\n` +
-          `This will automatically place all operations on correct machines.`
-        )) {
-          // User chose to reschedule - call reschedule API
-          try {
-            const rescheduleResponse = await apiService.post(`/api/scheduling/reschedule-job/${draggedSlot.job_id}`);
-            toast.success(`Job ${draggedSlot.job_number} has been rescheduled with correct machine assignments`);
-            fetchScheduleData();
-            return;
-          } catch (error) {
-            console.error('Error rescheduling job:', error);
-            toast.error('Failed to reschedule job automatically');
-          }
-        } else {
-          // User cancelled - don't proceed with invalid move
-          toast.info('Move cancelled to prevent invalid assignment');
-          return;
-        }
-      }
-
-      // Sequence validation - prevent dragging operations out of order
-      const sequenceValidationResult = await validateOperationSequence(draggedSlot, targetDay);
-      if (!sequenceValidationResult.isValid) {
-        if (window.confirm(
-          `⚠️ Operation Sequence Violation!\n\n` +
-          `${sequenceValidationResult.message}\n\n` +
-          `Moving this operation could cause scheduling conflicts.\n\n` +
-          `Would you like to unschedule and reschedule this entire job instead?\n` +
-          `This will ensure all operations are scheduled in proper sequence.`
-        )) {
-          // User chose to reschedule - call reschedule API
-          try {
-            const rescheduleResponse = await apiService.post(`/api/scheduling/reschedule-job/${draggedSlot.job_id}`);
-            toast.success(`Job ${draggedSlot.job_number} has been rescheduled in proper sequence`);
-            fetchScheduleData();
-            return;
-          } catch (error) {
-            console.error('Error rescheduling job:', error);
-            toast.error('Failed to reschedule job automatically');
-          }
-        } else {
-          // User cancelled - don't proceed with invalid sequence move
-          toast.info('Move cancelled to maintain proper operation sequence');
-          return;
-        }
-      }
-      
-      // Handle remaining validation for valid moves
-      if (!draggedSlot.employee_id && !isInspectOperation && !isTargetInspectMachine) {
-        console.error('Dragged slot has no employee assigned:', draggedSlot);
-        toast.error(`Cannot move job ${draggedSlot.job_number} - no employee assigned. Please assign an employee first.`);
-        return;
-      }
-
-      let newStartTime, newEndTime;
-      
-      // For INSPECT operations or when no employee is assigned, use simple placement
-      if (isInspectOperation || !draggedSlot.employee_id) {
-        console.log('INSPECT operation or no employee - using simple time placement');
-        newStartTime = new Date(targetDay);
-        newStartTime.setHours(6, 0, 0, 0);
-        newEndTime = new Date(newStartTime.getTime() + (draggedSlot.duration_minutes * 60 * 1000));
+      if (rescheduleOptionsOrDate && typeof rescheduleOptionsOrDate === 'object' && rescheduleOptionsOrDate.date) {
+        // New format: options object with date and machineId/machineGroupId
+        newStartDate = rescheduleOptionsOrDate.date;
+        targetMachineId = rescheduleOptionsOrDate.machineId;
+        targetMachineGroupId = rescheduleOptionsOrDate.machineGroupId;
       } else {
-        // For operations requiring employees, find optimal slot
-        console.log('Requesting optimal slot for:', {
-          machine_id: parseInt(targetMachineId),
-          employee_id: draggedSlot.employee_id,
-          duration_minutes: draggedSlot.duration_minutes,
-          start_date: targetDay.toISOString(),
-          exclude_job_id: draggedSlot.job_id
-        });
-        
-        // Find the best available time slot for this employee and machine on the target day
-        const response = await apiService.get('/api/scheduling/available-slots', {
-          params: {
-            machine_id: parseInt(targetMachineId),
-            employee_id: draggedSlot.employee_id,
-            duration_minutes: draggedSlot.duration_minutes,
-            start_date: targetDay.toISOString(),
-            exclude_job_id: draggedSlot.job_id
-          }
-        });
-        
-        console.log('Available slots response:', response.data);
-
-        if (response.data && response.data.length > 0) {
-          // Use the earliest available slot
-          const earliestSlot = response.data[0];
-          newStartTime = new Date(earliestSlot.start_datetime);
-          newEndTime = new Date(earliestSlot.end_datetime);
-        } else {
-          console.warn('No available slots found, using 6 AM fallback');
-          // Fallback to 6 AM if no specific slots found
-          newStartTime = new Date(targetDay);
-          newStartTime.setHours(6, 0, 0, 0);
-          newEndTime = new Date(newStartTime.getTime() + (draggedSlot.duration_minutes * 60 * 1000));
-        }
+        // Old format: date only (backward compatibility)
+        newStartDate = rescheduleOptionsOrDate;
+        targetMachineId = selectedSlot.machine_id; // Keep current machine
       }
-
-      // Determine employee assignment
-      let employeeId = draggedSlot.employee_id;
-      let employeeMessage = '';
       
-      // If moving to a different machine, find a qualified operator
-      if (parseInt(targetMachineId) !== draggedSlot.machine_id) {
-        console.log(`Moving to different machine (${draggedSlot.machine_id} → ${targetMachineId}), checking operator requirements...`);
+      // Validate the new start date
+      if (!newStartDate || !(newStartDate instanceof Date) || isNaN(newStartDate.getTime())) {
+        throw new Error('Invalid date provided for rescheduling');
+      }
+      
+      // Fix timezone issue by creating a proper local date 
+      const localDate = new Date(newStartDate.getFullYear(), newStartDate.getMonth(), newStartDate.getDate());
+      const dayOfWeek = localDate.getDay();
+      const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek];
+      
+      const machineChange = targetMachineId !== selectedSlot.machine_id;
+      const targetMachine = machines.find(m => m.id === targetMachineId);
+      const isGroupReschedule = !!targetMachineGroupId;
+      
+      let rescheduleDescription;
+      if (isGroupReschedule) {
+        const targetGroup = machineGroups.find(g => g.id === targetMachineGroupId);
+        rescheduleDescription = `🗓️ Manual reschedule: Moving entire ${selectedSlot.operation_name} operation from ${selectedSlot.start_datetime} to ${localDate.toDateString()} (${dayName}) using machine group ${targetGroup?.name || targetMachineGroupId}`;
+      } else {
+        rescheduleDescription = `🗓️ Manual reschedule: Moving entire ${selectedSlot.operation_name} operation from ${selectedSlot.start_datetime} to ${localDate.toDateString()} (${dayName})${machineChange ? ` on ${targetMachine?.name}` : ''}`;
+      }
+      console.log(rescheduleDescription);
+      
+      // Step 1: Get all schedule slots for this job to find ALL chunks of this operation
+      const slotsResponse = await apiService.get(`/api/scheduling/slots`, { params: { job_id: selectedSlot.job_id } });
+      const allJobSlots = slotsResponse.data;
+      
+      // Find ALL chunks/slots that belong to the same operation (job_routing_id)
+      const operationSlots = allJobSlots.filter(slot => slot.job_routing_id === selectedSlot.job_routing_id);
+      console.log(`Found ${operationSlots.length} chunks for operation ${selectedSlot.operation_name}`);
+      
+      // Step 2: Get job routings to understand the operation sequence
+      const routingsResponse = await apiService.get(`/api/jobs/${selectedSlot.job_id}/routings`);
+      const jobRoutings = routingsResponse.data;
+      
+      const currentOperation = jobRoutings.find(r => r.id === selectedSlot.job_routing_id);
+      if (!currentOperation) {
+        throw new Error('Could not find operation in job routings');
+      }
+      
+      // Step 3: Decide whether to do full reschedule or partial reschedule based on operation sequence
+      const isFirstOperation = currentOperation.sequence_order === 1;
+      
+      if (isFirstOperation) {
+        // If rescheduling the first operation (SAW), do full job reschedule
+        console.log(`🗑️ Rescheduling FIRST operation - clearing entire job schedule to rebuild all operations...`);
+        for (const slot of allJobSlots) {
+          await apiService.delete(`/api/scheduling/slots/${slot.id}`);
+        }
+      } else {
+        // If rescheduling a later operation (HMC, INSPECT), only clear current and subsequent operations
+        console.log(`🗑️ Rescheduling LATER operation - only clearing current and subsequent operations...`);
         
-        // INSPECT operations don't need employee assignments
-        if (isInspectOperation || targetMachine?.name?.toLowerCase().includes('inspect')) {
-          employeeId = null;
-          employeeMessage = ' (Moved to INSPECT - no operator required)';
-          console.log('Moved to INSPECT operation - clearing employee assignment');
-        } else {
-          // For non-INSPECT operations, find qualified operator
-          try {
-            const operatorResponse = await apiService.get(`/api/machines/${targetMachineId}/operators`);
-            if (operatorResponse.data && operatorResponse.data.length > 0) {
-              // Use the most proficient available operator
-              const bestOperator = operatorResponse.data[0];
-              employeeId = bestOperator.employee_id;
-              employeeMessage = ` (Reassigned to ${bestOperator.employee_name})`;
-              console.log(`Reassigned to operator: ${bestOperator.employee_name}`);
-            } else {
-              console.warn(`No qualified operators found for machine ${targetMachineId}`);
-              // Keep original employee if no qualified operators found
-              employeeMessage = ' (Warning: Original operator may not be qualified for this machine)';
-            }
-          } catch (error) {
-            console.error('Error finding qualified operator:', error);
-            employeeMessage = ' (Warning: Could not verify operator qualification)';
+        // Find operations at this sequence order and later
+        const operationsToReschedule = jobRoutings.filter(routing => 
+          routing.sequence_order >= currentOperation.sequence_order
+        );
+        
+        console.log(`Operations to reschedule (sequence ${currentOperation.sequence_order}+):`, operationsToReschedule.map(op => op.operation_name));
+        
+        // Delete slots for current and subsequent operations only
+        for (const op of operationsToReschedule) {
+          const opSlots = allJobSlots.filter(slot => slot.job_routing_id === op.id);
+          console.log(`🗑️ Deleting ${opSlots.length} slots for operation ${op.operation_name}`);
+          for (const slot of opSlots) {
+            await apiService.delete(`/api/scheduling/slots/${slot.id}`);
           }
         }
       }
-
-      const updatedSlot = {
-        machine_id: parseInt(targetMachineId),
-        employee_id: employeeId,
-        start_datetime: newStartTime.toISOString(),
-        end_datetime: newEndTime.toISOString(),
-        notes: `${draggedSlot.notes || ''} (Moved manually)`.trim()
-      };
-
-      await apiService.put(`/api/scheduling/slots/${draggedSlot.id}`, updatedSlot);
-      toast.success(`Moved ${draggedSlot.job_number} to ${machines.find(m => m.id === parseInt(targetMachineId))?.name} at ${format(newStartTime, 'h:mm a')}${employeeMessage}`);
+      
+      // Step 4: Different approach based on operation sequence
+      console.log(`📅 ${isFirstOperation ? 'Full job reschedule' : 'Partial reschedule'} starting ${format(localDate, 'MMM d, yyyy')}`);
+      
+      // Validate that the employee works on the target date
+      const employeeId = selectedSlot.employee_id;
+      
+      // Step 5: Employee validation
+      if (employeeId) {
+        try {
+          // Get employee's weekly schedule pattern to validate they work on target date
+          const workHoursResponse = await apiService.get(`/api/employees/${employeeId}/work-schedules`);
+          
+          if (workHoursResponse.data && workHoursResponse.data.length > 0) {
+            const targetDayOfWeek = dayOfWeek;
+            const workingDays = workHoursResponse.data.filter(day => day.enabled);
+            const targetDaySchedule = workingDays.find(day => day.day_of_week === targetDayOfWeek);
+            
+            console.log(`🗓️ Target date is day ${targetDayOfWeek} (${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][targetDayOfWeek]})`);
+            console.log(`👤 Employee ${employeeId} working days:`, workingDays.map(d => d.day_of_week));
+            
+            if (!targetDaySchedule) {
+              const workingDayNames = workingDays.map(d => ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.day_of_week]);
+              throw new Error(`Employee does not work on ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][targetDayOfWeek]}s. They work on: ${workingDayNames.join(', ')}`);
+            }
+            
+            console.log(`📋 Employee ${employeeId} works ${targetDaySchedule.start_time}-${targetDaySchedule.end_time} on ${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][targetDayOfWeek]}s`);
+          }
+        } catch (error) {
+          console.error('Error validating employee work schedule:', error);
+          throw error;
+        }
+      }
+      
+      // Step 6: Handle machine change if needed
+      if (machineChange || isGroupReschedule) {
+        if (isGroupReschedule) {
+          const targetGroup = machineGroups.find(g => g.id === targetMachineGroupId);
+          console.log(`🏭 Machine group change detected: switching to group ${targetGroup?.name}`);
+          
+          try {
+            // Update the job routing to use the machine group (let scheduler pick specific machine)
+            await apiService.put(`/api/jobs/${selectedSlot.job_id}/routings/${currentOperation.id}`, {
+              machine_id: null, // Clear specific machine assignment
+              machine_group_id: targetMachineGroupId // Set group assignment
+            });
+            console.log(`✅ Updated routing ${currentOperation.operation_name} to use machine group ${targetGroup?.name}`);
+          } catch (error) {
+            console.error('Error updating job routing machine group:', error);
+            throw new Error(`Failed to change machine group assignment: ${error.message}`);
+          }
+        } else if (machineChange) {
+          console.log(`🔧 Machine change detected: ${selectedSlot.machine_name} → ${targetMachine?.name}`);
+          
+          try {
+            // Update the job routing to use the new machine
+            await apiService.put(`/api/jobs/${selectedSlot.job_id}/routings/${currentOperation.id}`, {
+              machine_id: targetMachineId,
+              machine_group_id: null // Clear group assignment when specific machine is selected
+            });
+            console.log(`✅ Updated routing ${currentOperation.operation_name} to use machine ${targetMachine?.name}`);
+          } catch (error) {
+            console.error('Error updating job routing machine:', error);
+            throw new Error(`Failed to change machine assignment: ${error.message}`);
+          }
+        }
+      }
+      
+      // Step 7: Do full job reschedule to rebuild all operations properly
+      console.log(`🔄 Doing full job reschedule to rebuild all operations starting from ${format(localDate, 'MMM d, yyyy')}...`);
+      
+      try {
+        // Update the job's start date (keeping promised date intact)
+        await apiService.put(`/api/jobs/${selectedSlot.job_id}`, {
+          start_date: localDate.toISOString()
+        });
+        
+        // Choose reschedule approach based on operation sequence
+        let rescheduleResponse;
+        
+        if (isFirstOperation) {
+          // Full job reschedule for first operation (moves entire job)
+          console.log(`🔄 Full job reschedule from start date: ${format(localDate, 'MMM d, yyyy')}`);
+          rescheduleResponse = await apiService.post(`/api/scheduling/reschedule-job/${selectedSlot.job_id}`, {
+            force_start_date: localDate.toISOString()
+          });
+        } else {
+          // Partial reschedule for later operations (only subsequent operations)
+          console.log(`🔄 Partial reschedule from current operation: ${format(localDate, 'MMM d, yyyy')}`);
+          rescheduleResponse = await apiService.post(`/api/scheduling/reschedule-job/${selectedSlot.job_id}`, { 
+            force_start_date: localDate.toISOString(), // Use the target date
+            partial: true, // Indicate this is a partial reschedule
+            startFromOperation: selectedSlot.sequence_order // Start from this operation
+          });
+        }
+        console.log(`✅ Reschedule successful:`, rescheduleResponse.data);
+        
+        if (rescheduleResponse.data && rescheduleResponse.data.scheduled_operations) {
+          console.log(`📊 Operations rescheduled by system:`);
+          rescheduleResponse.data.scheduled_operations.forEach(op => {
+            console.log(`   ${op.operation_name}: ${op.scheduled ? '✅ scheduled' : '❌ failed'}`);
+            if (op.schedule_slots && op.schedule_slots.length > 0) {
+              op.schedule_slots.forEach(slot => {
+                console.log(`     ${slot.start_datetime} to ${slot.end_datetime}`);
+              });
+            }
+          });
+        }
+        
+        // Create summary data for the modal
+        const subsequentOperations = jobRoutings.filter(routing => 
+          routing.sequence_order > currentOperation.sequence_order
+        );
+        
+        const summaryData = {
+          primaryOperation: {
+            operation: selectedSlot.operation_name,
+            from: selectedSlot.start_datetime,
+            to: localDate.toISOString(),
+            duration: rescheduleResponse.data.scheduled_operations?.find(op => op.operation_name === selectedSlot.operation_name)?.schedule_slots?.reduce((sum, slot) => sum + (slot.duration_minutes || 0), 0) || 'System determined',
+            chunks: rescheduleResponse.data.scheduled_operations?.find(op => op.operation_name === selectedSlot.operation_name)?.schedule_slots?.length || 1,
+            machineChange: machineChange ? {
+              from: selectedSlot.machine_name,
+              to: targetMachine?.name
+            } : null
+          },
+          subsequentOperations: subsequentOperations
+        };
+        
+        // Show success toast and summary modal
+        const machineChangeText = machineChange ? ` on ${targetMachine?.name}` : '';
+        const successMessage = isFirstOperation ? 
+          `✅ Entire job rescheduled starting ${format(localDate, 'MMM d')}${machineChangeText} • All operations rebuilt` :
+          `✅ ${selectedSlot.operation_name} moved to ${format(localDate, 'MMM d')}${machineChangeText} • Subsequent operations rescheduled`;
+        toast.success(successMessage);
+        setRescheduleSummary(summaryData);
+        setSummaryModalOpen(true);
+        
+      } catch (rescheduleError) {
+        console.error('❌ Reschedule failed:', rescheduleError);
+        throw new Error(`Failed to reschedule: ${rescheduleError.response?.data?.error || rescheduleError.message || 'Unknown error'}`);
+      }
+      setEditModalOpen(false);
       fetchScheduleData();
+      
     } catch (error) {
-      console.error('Error moving schedule slot:', error);
-      toast.error('Failed to move schedule slot');
+      console.error('Error in manual reschedule:', error);
+      toast.error(`Failed to reschedule operation: ${error.message}`);
     }
-  }, [draggedSlot, machines, currentDate, viewMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  };
+
+
 
   const formatViewTitle = () => {
     switch (viewMode) {
@@ -614,7 +876,7 @@ const ScheduleView = () => {
   };
 
   const activeMachines = machines.filter(m => m.status === 'active');
-  const daysInView = getDaysInView(); // eslint-disable-line no-use-before-define
+  const daysInView = getDaysInView();
 
   if (loading) {
     return (
@@ -625,22 +887,14 @@ const ScheduleView = () => {
   }
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
-      onDragEnd={handleDragEnd}
-      modifiers={[restrictToWindowEdges]}
-    >
-      <Box>
+    <Box>
       {/* Header */}
       <Box sx={{ mb: 3 }}>
         <Typography variant="h4" gutterBottom>
           Production Schedule
         </Typography>
         <Typography variant="subtitle1" color="text.secondary" gutterBottom>
-          Visual scheduling with drag-and-drop manual overrides
+          Visual scheduling with manual rescheduling controls
         </Typography>
         
         {/* Navigation Controls */}
@@ -661,6 +915,19 @@ const ScheduleView = () => {
           </Box>
           
           <Box display="flex" gap={1}>
+            <Tooltip title="Remove all scheduled operations (for testing)">
+              <Button
+                variant="outlined"
+                color="error"
+                size="small"
+                startIcon={<ClearAllIcon />}
+                onClick={handleUnscheduleAll}
+                disabled={loading}
+                sx={{ mr: 1 }}
+              >
+                Unschedule All
+              </Button>
+            </Tooltip>
             <FormControl size="small" sx={{ minWidth: 120 }}>
               <InputLabel>View</InputLabel>
               <Select
@@ -680,6 +947,12 @@ const ScheduleView = () => {
                     Week
                   </Box>
                 </MenuItem>
+                <MenuItem value="month">
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <ScheduleIcon fontSize="small" />
+                    Month
+                  </Box>
+                </MenuItem>
               </Select>
             </FormControl>
           </Box>
@@ -690,7 +963,7 @@ const ScheduleView = () => {
       <Card>
         <CardContent sx={{ p: 1 }}>
           <Box sx={{ overflowX: 'auto' }}>
-            <Box sx={{ minWidth: viewMode === 'day' ? '800px' : '1400px' }}>
+            <Box sx={{ minWidth: viewMode === 'day' ? '800px' : viewMode === 'month' ? '2000px' : '1400px' }}>
               {/* Header Row */}
               <Box display="flex" sx={{ borderBottom: '2px solid #e0e0e0' }}>
                 <Box sx={{ width: '150px', p: 1, fontWeight: 'bold', borderRight: '1px solid #e0e0e0' }}>
@@ -720,7 +993,7 @@ const ScheduleView = () => {
 
               {/* Machine Rows */}
               {activeMachines.map((machine) => (
-                <Box key={machine.id} display="flex" sx={{ borderBottom: '1px solid #e0e0e0', minHeight: '80px' }}>
+                <Box key={machine.id} display="flex" sx={{ borderBottom: '1px solid #e0e0e0', minHeight: viewMode === 'month' ? '120px' : '150px' }}>
                   <Box 
                     sx={{ 
                       width: '150px', 
@@ -749,11 +1022,9 @@ const ScheduleView = () => {
                     );
                     
                     return (
-                      <DroppableZone 
+                      <ScheduleDayZone 
                         key={dayIndex}
-                        machineId={machine.id}
                         dayIndex={dayIndex}
-                        isOver={dragOverZone?.machineId === machine.id && dragOverZone?.dayIndex === dayIndex}
                       >
                         {daySlots.map((slot) => {
                           const position = getSlotPosition(slot);
@@ -784,7 +1055,7 @@ const ScheduleView = () => {
                                   </Typography>
                                   <br />
                                   <Typography variant="caption" sx={{ fontWeight: 'bold', color: '#4caf50' }}>
-                                    💡 Drag to move between machines/days
+                                    💡 Click to open manual rescheduling options
                                   </Typography>
                                   {slot.notes && (
                                     <>
@@ -797,7 +1068,7 @@ const ScheduleView = () => {
                                 </Box>
                               }
                             >
-                              <DraggableSlot
+                              <ScheduleSlot
                                 slot={slot}
                                 position={position}
                                 color={color}
@@ -897,11 +1168,11 @@ const ScheduleView = () => {
                                     </>
                                   )}
                                 </Box>
-                              </DraggableSlot>
+                              </ScheduleSlot>
                             </Tooltip>
                           );
                         })}
-                      </DroppableZone>
+                      </ScheduleDayZone>
                     );
                   })}
                 </Box>
@@ -966,7 +1237,7 @@ const ScheduleView = () => {
                 <Typography variant="subtitle2" gutterBottom>
                   Schedule Management Actions:
                 </Typography>
-                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
                   <Button 
                     variant="outlined" 
                     color="warning"
@@ -984,8 +1255,26 @@ const ScheduleView = () => {
                     Reschedule Job
                   </Button>
                 </Box>
-                <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                  Unschedule removes all schedule slots. Reschedule automatically places operations on correct machines.
+                
+                <Divider sx={{ my: 2 }} />
+                
+                <Typography variant="subtitle2" gutterBottom>
+                  Manual Reschedule Operation:
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+                  Move this operation to a specific date. All subsequent operations will be rescheduled automatically.
+                </Typography>
+                <ManualRescheduleControls 
+                  selectedSlot={selectedSlot}
+                  onReschedule={handleManualReschedule}
+                  machines={machines}
+                  machineGroups={machineGroups}
+                />
+                
+                <Divider sx={{ my: 2 }} />
+                
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                  Full reschedule removes all schedule slots and places operations on correct machines automatically.
                 </Typography>
               </Box>
             </Box>
@@ -998,44 +1287,14 @@ const ScheduleView = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Drag Message */}
-      <Snackbar 
-        open={!!dragMessage} 
-        message={dragMessage}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      {/* Reschedule Summary Modal */}
+      <RescheduleSummaryModal 
+        open={summaryModalOpen}
+        onClose={() => setSummaryModalOpen(false)}
+        summary={rescheduleSummary}
       />
 
-      {/* Drag Overlay */}
-      <DragOverlay>
-        {draggedSlot && (
-          <Box
-            sx={{
-              backgroundColor: getSlotColor(draggedSlot),
-              borderRadius: '4px',
-              border: '2px solid rgba(255,255,255,0.8)',
-              p: 0.5,
-              color: 'white',
-              fontSize: '11px',
-              minWidth: '120px',
-              minHeight: '60px',
-              boxShadow: '0 4px 8px rgba(0,0,0,0.3)',
-              cursor: 'grabbing'
-            }}
-          >
-            <Typography variant="caption" display="block" fontWeight="bold" noWrap>
-              {draggedSlot.job_number}
-            </Typography>
-            <Typography variant="caption" display="block" noWrap>
-              {draggedSlot.operation_name}
-            </Typography>
-            <Typography variant="caption" display="block" noWrap>
-              {draggedSlot.duration_minutes} min
-            </Typography>
-          </Box>
-        )}
-      </DragOverlay>
-      </Box>
-    </DndContext>
+    </Box>
   );
 };
 

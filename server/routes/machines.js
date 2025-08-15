@@ -225,12 +225,13 @@ router.post('/', [
     const { pool } = req.app.locals;
     const {
       name, model, manufacturer, machine_group_ids, capabilities,
-      max_workpiece_size, spindle_speed_max, tool_capacity, location, notes, status
+      max_workpiece_size, spindle_speed_max, tool_capacity, location, notes, status, efficiency_modifier
     } = req.body;
     
     // Convert empty strings to null for integer fields
     const cleanSpindleSpeedMax = spindle_speed_max === '' ? null : spindle_speed_max;
     const cleanToolCapacity = tool_capacity === '' ? null : tool_capacity;
+    const cleanEfficiencyModifier = efficiency_modifier || 1.00;
     
     // Start a transaction
     const client = await pool.connect();
@@ -241,12 +242,12 @@ router.post('/', [
       const machineResult = await client.query(`
         INSERT INTO machines (
           name, model, manufacturer, capabilities,
-          max_workpiece_size, spindle_speed_max, tool_capacity, location, notes, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          max_workpiece_size, spindle_speed_max, tool_capacity, location, notes, status, efficiency_modifier
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING *
       `, [
         name, model, manufacturer, capabilities,
-        max_workpiece_size, cleanSpindleSpeedMax, cleanToolCapacity, location, notes, status || 'active'
+        max_workpiece_size, cleanSpindleSpeedMax, cleanToolCapacity, location, notes, status || 'active', cleanEfficiencyModifier
       ]);
       
       const machine = machineResult.rows[0];
@@ -312,6 +313,45 @@ router.put('/:id', [
     // Convert empty strings to null for integer fields
     if (updateFields.spindle_speed_max === '') updateFields.spindle_speed_max = null;
     if (updateFields.tool_capacity === '') updateFields.tool_capacity = null;
+    if (updateFields.efficiency_modifier === '') updateFields.efficiency_modifier = 1.00;
+    
+    // Convert string numbers to integers for integer fields
+    if (updateFields.spindle_speed_max && updateFields.spindle_speed_max !== '') {
+      updateFields.spindle_speed_max = parseInt(updateFields.spindle_speed_max, 10);
+      if (isNaN(updateFields.spindle_speed_max)) {
+        return res.status(400).json({ error: 'Spindle speed max must be a valid number' });
+      }
+    }
+    if (updateFields.tool_capacity && updateFields.tool_capacity !== '') {
+      updateFields.tool_capacity = parseInt(updateFields.tool_capacity, 10);
+      if (isNaN(updateFields.tool_capacity)) {
+        return res.status(400).json({ error: 'Tool capacity must be a valid number' });
+      }
+    }
+    if (updateFields.efficiency_modifier !== undefined) {
+      updateFields.efficiency_modifier = parseFloat(updateFields.efficiency_modifier) || 1.00;
+      if (updateFields.efficiency_modifier < 0.01 || updateFields.efficiency_modifier > 2.00) {
+        return res.status(400).json({ error: 'Efficiency modifier must be between 0.01 and 2.00' });
+      }
+    }
+    
+    // Ensure capabilities is an array
+    if (updateFields.capabilities && !Array.isArray(updateFields.capabilities)) {
+      updateFields.capabilities = [];
+    }
+    
+    // Filter out any fields that shouldn't be updated
+    const allowedFields = [
+      'name', 'model', 'manufacturer', 'capabilities', 'max_workpiece_size',
+      'spindle_speed_max', 'tool_capacity', 'status', 'location', 'notes', 'efficiency_modifier'
+    ];
+    
+    const filteredUpdateFields = {};
+    Object.keys(updateFields).forEach(key => {
+      if (allowedFields.includes(key)) {
+        filteredUpdateFields[key] = updateFields[key];
+      }
+    });
     
     // Start a transaction
     const client = await pool.connect();
@@ -319,12 +359,12 @@ router.put('/:id', [
       await client.query('BEGIN');
       
       // Update machine basic info
-      if (Object.keys(updateFields).length > 0) {
-        const setClause = Object.keys(updateFields)
+      if (Object.keys(filteredUpdateFields).length > 0) {
+        const setClause = Object.keys(filteredUpdateFields)
           .map((key, index) => `${key} = $${index + 2}`)
           .join(', ');
         
-        const values = [id, ...Object.values(updateFields)];
+        const values = [id, ...Object.values(filteredUpdateFields)];
         
         const result = await client.query(`
           UPDATE machines 
@@ -345,13 +385,21 @@ router.put('/:id', [
         
         // Add new assignments
         if (Array.isArray(machine_group_ids) && machine_group_ids.length > 0) {
-          const groupAssignments = machine_group_ids.map(groupId => 
-            client.query(`
-              INSERT INTO machine_group_assignments (machine_id, machine_group_id)
-              VALUES ($1, $2)
-            `, [id, groupId])
-          );
-          await Promise.all(groupAssignments);
+          // Validate that all group IDs are valid integers
+          const validGroupIds = machine_group_ids.filter(groupId => {
+            const num = parseInt(groupId, 10);
+            return !isNaN(num) && num > 0;
+          });
+          
+          if (validGroupIds.length > 0) {
+            const groupAssignments = validGroupIds.map(groupId => 
+              client.query(`
+                INSERT INTO machine_group_assignments (machine_id, machine_group_id)
+                VALUES ($1, $2)
+              `, [id, parseInt(groupId, 10)])
+            );
+            await Promise.all(groupAssignments);
+          }
         }
       }
       
@@ -383,6 +431,8 @@ router.put('/:id', [
     }
   } catch (error) {
     console.error('Error updating machine:', error);
+    console.error('Request body:', req.body);
+    console.error('Machine ID:', req.params.id);
     res.status(500).json({ error: 'Failed to update machine' });
   }
 });
@@ -606,7 +656,7 @@ router.get('/operators/:machineId', async (req, res) => {
       JOIN employees e ON oma.employee_id = e.id
       JOIN machines m ON oma.machine_id = m.id
       WHERE oma.machine_id = $1
-      ORDER BY e.first_name, e.last_name
+      ORDER BY oma.preference_rank ASC, e.first_name, e.last_name
     `, [machineId]);
     
     res.json(result.rows);
@@ -620,7 +670,8 @@ router.get('/operators/:machineId', async (req, res) => {
 router.post('/operators', [
   body('employee_id').isInt().withMessage('Employee ID is required'),
   body('machine_id').isInt().withMessage('Machine ID is required'),
-  body('proficiency_level').optional().isIn(['trained', 'expert', 'certified']).withMessage('Invalid proficiency level')
+  body('proficiency_level').optional().isIn(['trained', 'expert', 'certified']).withMessage('Invalid proficiency level'),
+  body('preference_rank').optional().isInt({ min: 1, max: 10 }).withMessage('Preference rank must be between 1 and 10')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -629,14 +680,14 @@ router.post('/operators', [
     }
     
     const { pool } = req.app.locals;
-    const { employee_id, machine_id, proficiency_level, training_date, notes } = req.body;
+    const { employee_id, machine_id, proficiency_level, preference_rank, training_date, notes } = req.body;
     
     const result = await pool.query(`
       INSERT INTO operator_machine_assignments (
-        employee_id, machine_id, proficiency_level, training_date, notes
-      ) VALUES ($1, $2, $3, $4, $5)
+        employee_id, machine_id, proficiency_level, preference_rank, training_date, notes
+      ) VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
-    `, [employee_id, machine_id, proficiency_level || 'trained', training_date, notes]);
+    `, [employee_id, machine_id, proficiency_level || 'trained', preference_rank || 1, training_date, notes]);
     
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -651,7 +702,8 @@ router.post('/operators', [
 
 // Update operator-machine assignment
 router.put('/operators/:id', [
-  body('proficiency_level').optional().isIn(['trained', 'expert', 'certified']).withMessage('Invalid proficiency level')
+  body('proficiency_level').optional().isIn(['trained', 'expert', 'certified']).withMessage('Invalid proficiency level'),
+  body('preference_rank').optional().isInt({ min: 1, max: 10 }).withMessage('Preference rank must be between 1 and 10')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -661,14 +713,14 @@ router.put('/operators/:id', [
     
     const { pool } = req.app.locals;
     const { id } = req.params;
-    const { proficiency_level, training_date, notes } = req.body;
+    const { proficiency_level, preference_rank, training_date, notes } = req.body;
     
     const result = await pool.query(`
       UPDATE operator_machine_assignments 
-      SET proficiency_level = $1, training_date = $2, notes = $3, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
+      SET proficiency_level = $1, preference_rank = $2, training_date = $3, notes = $4, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $5
       RETURNING *
-    `, [proficiency_level, training_date, notes, id]);
+    `, [proficiency_level, preference_rank, training_date, notes, id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Operator assignment not found' });

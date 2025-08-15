@@ -40,6 +40,7 @@ app.use('/api/machines', require('./routes/machines'));
 app.use('/api/employees', require('./routes/employees'));
 app.use('/api/schedules', require('./routes/schedules'));
 app.use('/api/scheduling', require('./routes/scheduling'));
+app.use('/api/conflicts', require('./routes/conflicts'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
