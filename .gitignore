@@ -101,3 +101,8 @@ Thumbs.db
 
 # Upload directories
 uploads/
+server/uploads/
+
+# Business data files
+AttachedAssets/
+*.csv
