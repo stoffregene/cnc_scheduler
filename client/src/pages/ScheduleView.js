@@ -27,6 +27,7 @@ import {
   Schedule as ScheduleIcon,
   Build as BuildIcon,
   ClearAll as ClearAllIcon,
+  Lock as LockIcon,
 } from '@mui/icons-material';
 import { format, addDays, startOfWeek, startOfDay, parseISO, isSameDay } from 'date-fns';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
@@ -145,7 +146,7 @@ const ManualRescheduleControls = ({ selectedSlot, onReschedule, machines, machin
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Typography variant="body2" color="text.secondary">
+      <Typography variant="body2" sx={{ color: '#e4e6eb' }}>
         Current: {format(currentDate, 'MMM d, yyyy h:mm a')} on {currentMachine?.name || 'Unknown machine'}
       </Typography>
       
@@ -178,7 +179,7 @@ const ManualRescheduleControls = ({ selectedSlot, onReschedule, machines, machin
                 <Typography variant="body2" color="primary">
                   🏭 {group.name}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" sx={{ color: '#9ca3af' }}>
                   {group.description} ({group.machine_count} machines)
                 </Typography>
               </MenuItem>
@@ -201,7 +202,7 @@ const ManualRescheduleControls = ({ selectedSlot, onReschedule, machines, machin
                 <Typography variant="body2">
                   🔧 {machine.name}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" sx={{ color: '#9ca3af' }}>
                   {machine.model}
                 </Typography>
               </MenuItem>
@@ -215,7 +216,13 @@ const ManualRescheduleControls = ({ selectedSlot, onReschedule, machines, machin
           onClick={handleRescheduleClick}
           disabled={!selectedDate || loading}
           size="small"
-          sx={{ alignSelf: 'center' }}
+          sx={{ 
+            alignSelf: 'center',
+            color: '#e4e6eb',
+            '&:disabled': {
+              color: '#6b7280'
+            }
+          }}
         >
           {loading ? 'Rescheduling...' : isUsingDifferentMachine ? 'Move & Reschedule' : 'Reschedule Operation'}
         </Button>
@@ -223,13 +230,13 @@ const ManualRescheduleControls = ({ selectedSlot, onReschedule, machines, machin
       
       {selectedDate && (
         <Box>
-          <Typography variant="caption" color="info.main">
+          <Typography variant="caption" sx={{ color: '#3b82f6' }}>
             ⚡ This will move the operation to {format(selectedDate, 'MMM d, yyyy')} 
             {isUsingDifferentMachine && selectedMachineObj && ` on ${selectedMachineObj.name}`} 
             and automatically reschedule all subsequent operations.
           </Typography>
           {isUsingDifferentMachine && (
-            <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 0.5 }}>
+            <Typography variant="caption" sx={{ color: '#f59e0b', display: 'block', mt: 0.5 }}>
               🔄 Machine change: The system will automatically assign a qualified operator for the new machine.
             </Typography>
           )}
@@ -276,13 +283,13 @@ const RescheduleSummaryModal = ({ open, onClose, summary }) => {
           <Typography variant="subtitle1" fontWeight="bold">
             {summary.primaryOperation.operation}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{ color: '#e4e6eb' }}>
             <strong>From:</strong> {format(new Date(summary.primaryOperation.from), 'MMM d, yyyy h:mm a')}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{ color: '#e4e6eb' }}>
             <strong>To:</strong> {format(new Date(summary.primaryOperation.to), 'MMM d, yyyy h:mm a')}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{ color: '#e4e6eb' }}>
             <strong>Duration:</strong> {summary.primaryOperation.duration} minutes
             {summary.primaryOperation.chunks > 1 && ` (${summary.primaryOperation.chunks} chunks)`}
           </Typography>
@@ -304,7 +311,7 @@ const RescheduleSummaryModal = ({ open, onClose, summary }) => {
                 <Typography variant="subtitle2" fontWeight="bold">
                   {op.operation_name} (Sequence {op.sequence_order})
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" sx={{ color: '#9ca3af' }}>
                   Automatically rescheduled by system after {summary.primaryOperation.operation}
                 </Typography>
               </Card>
@@ -313,10 +320,10 @@ const RescheduleSummaryModal = ({ open, onClose, summary }) => {
         )}
 
         <Box sx={{ mt: 3, p: 2, backgroundColor: 'grey.100', borderRadius: 1 }}>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{ color: '#e4e6eb' }}>
             <strong>Total operations affected:</strong> {1 + (summary.subsequentOperations?.length || 0)}
           </Typography>
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" sx={{ color: '#e4e6eb' }}>
             <strong>Reschedule method:</strong> Manual with automatic trickle-down
           </Typography>
         </Box>
@@ -346,14 +353,31 @@ const ScheduleSlot = ({ slot, position, color, children, onClick }) => {
         borderRadius: '4px',
         border: position.isShort ? '3px solid rgba(255,255,255,0.8)' : '1px solid rgba(255,255,255,0.3)',
         cursor: 'pointer',
-        overflow: 'hidden',
-        boxShadow: position.isShort ? '0 4px 8px rgba(0,0,0,0.5)' : 'none',
-        '&:hover': {
-          opacity: 0.8,
-          transform: 'scale(1.02)',
-          boxShadow: '0 4px 8px rgba(0,0,0,0.4)'
+        overflow: 'hidden', // Keep contained for proper hover detection
+        boxShadow: position.isShort ? '0 4px 8px rgba(0,0,0,0.5)' : '0 2px 4px rgba(0,0,0,0.2)',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: '2px 3px',
+        textAlign: 'center',
+        minHeight: '20px',
+        zIndex: 1, // Lower z-index to not interfere with tooltip
+        // Ensure good text contrast
+        '& .MuiTypography-root': {
+          color: 'white !important',
+          textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+          fontWeight: 'bold !important',
+          lineHeight: '1.1 !important'
         },
-        transition: 'all 0.2s ease'
+        '&:hover': {
+          opacity: 0.9,
+          transform: 'scale(1.02)',
+          boxShadow: '0 6px 20px rgba(0,0,0,0.5)',
+          border: '2px solid rgba(0, 212, 255, 0.8)'
+        },
+        transition: 'all 0.2s ease-in-out',
+        cursor: 'pointer'
       }}
     >
       {children}
@@ -1031,61 +1055,32 @@ const ScheduleView = () => {
                           const color = getSlotColor(slot);
                           
                           return (
-                            <Tooltip
-                              key={slot.id}
-                              title={
-                                <Box>
-                                  <Typography variant="body2" fontWeight="bold">
-                                    {slot.job_number} - {slot.operation_name}
-                                  </Typography>
-                                  <Typography variant="caption">
-                                    {slot.customer_name} • {slot.part_name}
-                                  </Typography>
-                                  <br />
-                                  <Typography variant="caption">
-                                    {format(parseISO(slot.start_datetime), 'h:mm a')} - {format(parseISO(slot.end_datetime), 'h:mm a')}
-                                  </Typography>
-                                  <br />
-                                  <Typography variant="caption">
-                                    Operator: {slot.employee_name}
-                                  </Typography>
-                                  <br />
-                                  <Typography variant="caption">
-                                    Duration: {Math.round(position.durationMinutes)} minutes
-                                  </Typography>
-                                  <br />
-                                  <Typography variant="caption" sx={{ fontWeight: 'bold', color: '#4caf50' }}>
-                                    💡 Click to open manual rescheduling options
-                                  </Typography>
-                                  {slot.notes && (
-                                    <>
-                                      <br />
-                                      <Typography variant="caption" style={{ fontStyle: 'italic' }}>
-                                        {slot.notes}
-                                      </Typography>
-                                    </>
-                                  )}
-                                </Box>
-                              }
-                            >
                               <ScheduleSlot
+                                key={slot.id}
                                 slot={slot}
                                 position={position}
                                 color={color}
                                 onClick={() => handleSlotClick(slot)}
                               >
-                                <Box 
-                                  sx={{ 
-                                    p: position.isVeryShort ? 0.25 : 0.5, 
-                                    color: 'white', 
-                                    fontSize: position.isVeryShort ? '10px' : '11px',
-                                    lineHeight: position.isVeryShort ? '1.1' : '1.2',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    height: '100%',
-                                    justifyContent: position.isVeryShort ? 'center' : 'flex-start'
-                                  }}
+                                <Tooltip
+                                  title={`Job: ${slot.job_number} | Customer: ${slot.customer_name} | Part: ${slot.part_name} | Machine: ${slot.machine_name} | Operator: ${slot.employee_name} | Duration: ${(position.durationMinutes / 60).toFixed(1)}h`}
+                                  arrow
+                                  placement="top"
+                                  enterDelay={0}
+                                  leaveDelay={200}
                                 >
+                                  <Box 
+                                    sx={{ 
+                                      p: position.isVeryShort ? 0.25 : 0.5, 
+                                      color: 'white', 
+                                      fontSize: position.isVeryShort ? '10px' : '11px',
+                                      lineHeight: position.isVeryShort ? '1.1' : '1.2',
+                                      display: 'flex',
+                                      flexDirection: 'column',
+                                      height: '100%',
+                                      justifyContent: position.isVeryShort ? 'center' : 'flex-start'
+                                    }}
+                                  >
                                   {/* Show duration indicator for artificially enlarged blocks */}
                                   {position.actualHeight < (2 / 16) * 100 && (
                                     <Box 
@@ -1105,71 +1100,140 @@ const ScheduleView = () => {
                                   
                                   {position.isVeryShort ? (
                                     // Very short operations: show minimal info, centered
-                                    <Box sx={{ textAlign: 'center', mt: 1 }}>
-                                      <Typography 
-                                        variant="caption" 
-                                        display="block" 
-                                        fontWeight="bold" 
-                                        noWrap
-                                        sx={{ fontSize: '12px', lineHeight: 'inherit' }}
-                                      >
-                                        {slot.job_number}
-                                      </Typography>
-                                      <Typography 
-                                        variant="caption" 
-                                        display="block" 
-                                        noWrap
-                                        sx={{ fontSize: '10px', opacity: 0.9, mt: 0.5 }}
-                                      >
-                                        {slot.operation_name}
-                                      </Typography>
-                                      <Typography 
-                                        variant="caption" 
-                                        display="block" 
-                                        noWrap
-                                        sx={{ fontSize: '10px', opacity: 0.8, mt: 0.5 }}
-                                      >
-                                        {Math.round(position.durationMinutes)} min
-                                      </Typography>
+                                    <Box sx={{ textAlign: 'center', width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'center' }}>
+                                        {slot.locked && (
+                                          <LockIcon sx={{ fontSize: position.height < 25 ? '10px' : '12px', color: 'rgba(255,255,255,0.9)' }} />
+                                        )}
+                                        <Typography 
+                                          variant="caption" 
+                                          sx={{ 
+                                            fontSize: position.height < 25 ? '10px' : position.height < 35 ? '11px' : '12px',
+                                            fontWeight: 'bold',
+                                            color: 'white',
+                                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                                            wordWrap: 'break-word',
+                                            hyphens: 'auto',
+                                            lineHeight: 1.1,
+                                            maxWidth: '100%'
+                                          }}
+                                        >
+                                          {slot.job_number}
+                                        </Typography>
+                                      </Box>
+                                      {position.height > 20 && (
+                                        <Typography 
+                                          variant="caption" 
+                                          sx={{ 
+                                            fontSize: position.height < 25 ? '8px' : position.height < 35 ? '9px' : '10px',
+                                            color: 'rgba(255,255,255,0.95)',
+                                            textShadow: '1px 1px 2px rgba(0,0,0,0.8)',
+                                            wordWrap: 'break-word',
+                                            lineHeight: 1.1,
+                                            maxWidth: '100%'
+                                          }}
+                                        >
+                                          {Math.round(position.durationMinutes)}min
+                                        </Typography>
+                                      )}
                                     </Box>
                                   ) : position.isShort ? (
                                     // Short operations: show compact info
-                                    <>
-                                      <Typography 
-                                        variant="caption" 
-                                        display="block" 
-                                        fontWeight="bold" 
-                                        noWrap
-                                        sx={{ fontSize: 'inherit' }}
-                                      >
-                                        {slot.job_number}
-                                      </Typography>
-                                      <Typography 
-                                        variant="caption" 
-                                        display="block" 
-                                        noWrap
-                                        sx={{ fontSize: '10px' }}
-                                      >
-                                        {slot.operation_name}
-                                      </Typography>
-                                    </>
+                                    <Box sx={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'center' }}>
+                                        {slot.locked && (
+                                          <LockIcon sx={{ fontSize: position.height < 30 ? '11px' : '13px', color: 'rgba(255,255,255,0.9)' }} />
+                                        )}
+                                        <Typography 
+                                          variant="caption" 
+                                          sx={{ 
+                                            fontSize: position.height < 30 ? '11px' : position.height < 45 ? '12px' : '13px',
+                                            fontWeight: 'bold',
+                                            color: 'white',
+                                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                                            wordWrap: 'break-word',
+                                            hyphens: 'auto',
+                                            lineHeight: 1.1,
+                                            maxWidth: '100%'
+                                          }}
+                                        >
+                                          {slot.job_number}
+                                        </Typography>
+                                      </Box>
+                                      {position.height > 30 && (
+                                        <Typography 
+                                          variant="caption" 
+                                          sx={{ 
+                                            fontSize: position.height < 40 ? '9px' : position.height < 50 ? '10px' : '11px',
+                                            color: 'rgba(255,255,255,0.95)',
+                                            textShadow: '1px 1px 2px rgba(0,0,0,0.8)',
+                                            wordWrap: 'break-word',
+                                            lineHeight: 1.1,
+                                            maxWidth: '100%'
+                                          }}
+                                        >
+                                          {slot.operation_name || slot.machine_name}
+                                        </Typography>
+                                      )}
+                                    </Box>
                                   ) : (
-                                    // Normal operations: show full info
-                                    <>
-                                      <Typography variant="caption" display="block" fontWeight="bold" noWrap>
-                                        {slot.job_number}
-                                      </Typography>
-                                      <Typography variant="caption" display="block" noWrap>
-                                        {slot.operation_name}
-                                      </Typography>
-                                      <Typography variant="caption" display="block" noWrap>
-                                        {format(parseISO(slot.start_datetime), 'h:mm a')}
-                                      </Typography>
-                                    </>
+                                    // Normal operations: show full info with dynamic sizing
+                                    <Box sx={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 0.5 }}>
+                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'center' }}>
+                                        {slot.locked && (
+                                          <LockIcon sx={{ fontSize: position.height < 40 ? '12px' : '14px', color: 'rgba(255,255,255,0.9)' }} />
+                                        )}
+                                        <Typography 
+                                          variant="caption" 
+                                          sx={{ 
+                                            fontSize: position.height < 40 ? '12px' : position.height < 60 ? '13px' : '14px',
+                                            fontWeight: 'bold',
+                                            color: 'white',
+                                            textShadow: '2px 2px 4px rgba(0,0,0,0.9)',
+                                            wordWrap: 'break-word',
+                                            hyphens: 'auto',
+                                            lineHeight: 1.1,
+                                            maxWidth: '100%'
+                                          }}
+                                        >
+                                          {slot.job_number}
+                                        </Typography>
+                                      </Box>
+                                      {position.height > 35 && (
+                                        <Typography 
+                                          variant="caption" 
+                                          sx={{ 
+                                            fontSize: position.height < 50 ? '10px' : position.height < 70 ? '11px' : '12px',
+                                            color: 'rgba(255,255,255,0.95)',
+                                            textShadow: '1px 1px 2px rgba(0,0,0,0.8)',
+                                            wordWrap: 'break-word',
+                                            lineHeight: 1.1,
+                                            maxWidth: '100%'
+                                          }}
+                                        >
+                                          {slot.operation_name || slot.machine_name}
+                                        </Typography>
+                                      )}
+                                      {position.height > 55 && (
+                                        <Typography 
+                                          variant="caption" 
+                                          sx={{ 
+                                            fontSize: position.height < 70 ? '9px' : '10px',
+                                            color: 'rgba(255,255,255,0.9)',
+                                            textShadow: '1px 1px 2px rgba(0,0,0,0.8)',
+                                            wordWrap: 'break-word',
+                                            lineHeight: 1.1,
+                                            maxWidth: '100%'
+                                          }}
+                                        >
+                                          {format(parseISO(slot.start_datetime), 'h:mm a')}
+                                        </Typography>
+                                      )}
+                                    </Box>
                                   )}
-                                </Box>
+                                  </Box>
+                                </Tooltip>
                               </ScheduleSlot>
-                            </Tooltip>
                           );
                         })}
                       </ScheduleDayZone>
@@ -1199,42 +1263,53 @@ const ScheduleView = () => {
       </Card>
 
       {/* Edit Slot Modal */}
-      <Dialog open={editModalOpen} onClose={() => setEditModalOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>
+      <Dialog 
+        open={editModalOpen} 
+        onClose={() => setEditModalOpen(false)} 
+        maxWidth="sm" 
+        fullWidth
+        PaperProps={{
+          sx: {
+            backgroundColor: '#1a2030',
+            color: '#e4e6eb'
+          }
+        }}
+      >
+        <DialogTitle sx={{ backgroundColor: '#1a2030', color: '#e4e6eb', borderBottom: '1px solid #374151' }}>
           Job Schedule Management
         </DialogTitle>
-        <DialogContent>
+        <DialogContent sx={{ backgroundColor: '#1a2030', color: '#e4e6eb' }}>
           {selectedSlot && (
             <Box sx={{ pt: 1 }}>
-              <Typography variant="h6" gutterBottom color="primary">
+              <Typography variant="h6" gutterBottom sx={{ color: '#00d4ff' }}>
                 Job: {selectedSlot.job_number} - {selectedSlot.operation_name}
               </Typography>
-              <Typography variant="body2" gutterBottom>
+              <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
                 Customer: {selectedSlot.customer_name}
               </Typography>
-              <Typography variant="body2" gutterBottom>
+              <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
                 Part: {selectedSlot.part_name}
               </Typography>
-              <Typography variant="body2" gutterBottom>
+              <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
                 Machine: {selectedSlot.machine_name}
               </Typography>
-              <Typography variant="body2" gutterBottom>
+              <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
                 Operator: {selectedSlot.employee_name || 'None (INSPECT operation)'}
               </Typography>
-              <Typography variant="body2" gutterBottom>
+              <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
                 Time: {format(parseISO(selectedSlot.start_datetime), 'MMM d, yyyy h:mm a')} - {format(parseISO(selectedSlot.end_datetime), 'h:mm a')}
               </Typography>
-              <Typography variant="body2" gutterBottom>
-                Duration: {selectedSlot.duration_minutes} minutes
+              <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
+                Duration: {(selectedSlot.duration_minutes / 60).toFixed(1)}h
               </Typography>
               {selectedSlot.notes && (
-                <Typography variant="body2" gutterBottom>
+                <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
                   Notes: {selectedSlot.notes}
                 </Typography>
               )}
               
-              <Box sx={{ mt: 3, p: 2, backgroundColor: '#f5f5f5', borderRadius: 1 }}>
-                <Typography variant="subtitle2" gutterBottom>
+              <Box sx={{ mt: 3, p: 2, backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: 1, border: '1px solid #374151' }}>
+                <Typography variant="subtitle2" gutterBottom sx={{ color: '#e4e6eb' }}>
                   Schedule Management Actions:
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 2 }}>
@@ -1246,22 +1321,14 @@ const ScheduleView = () => {
                   >
                     Unschedule Job
                   </Button>
-                  <Button 
-                    variant="outlined" 
-                    color="primary"
-                    onClick={() => handleRescheduleJob(selectedSlot.job_id, selectedSlot.job_number)}
-                    size="small"
-                  >
-                    Reschedule Job
-                  </Button>
                 </Box>
                 
                 <Divider sx={{ my: 2 }} />
                 
-                <Typography variant="subtitle2" gutterBottom>
+                <Typography variant="subtitle2" gutterBottom sx={{ color: '#e4e6eb' }}>
                   Manual Reschedule Operation:
                 </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ mb: 2, display: 'block' }}>
+                <Typography variant="caption" sx={{ color: '#9ca3af', mb: 2, display: 'block' }}>
                   Move this operation to a specific date. All subsequent operations will be rescheduled automatically.
                 </Typography>
                 <ManualRescheduleControls 
@@ -1273,15 +1340,15 @@ const ScheduleView = () => {
                 
                 <Divider sx={{ my: 2 }} />
                 
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                <Typography variant="caption" sx={{ color: '#9ca3af', display: 'block' }}>
                   Full reschedule removes all schedule slots and places operations on correct machines automatically.
                 </Typography>
               </Box>
             </Box>
           )}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditModalOpen(false)}>
+        <DialogActions sx={{ backgroundColor: '#1a2030', borderTop: '1px solid #374151' }}>
+          <Button onClick={() => setEditModalOpen(false)} sx={{ color: '#e4e6eb' }}>
             Close
           </Button>
         </DialogActions>

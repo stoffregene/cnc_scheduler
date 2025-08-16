@@ -4,6 +4,7 @@ const csv = require('csv-parser');
 const fs = require('fs');
 const { body, validationResult } = require('express-validator');
 const JobBossCSVParser = require('../services/jobbossCSVParser');
+const PriorityService = require('../services/priorityService');
 const router = express.Router();
 
 // Configure multer for file uploads
@@ -324,19 +325,145 @@ router.put('/:id', [
   }
 });
 
+// Delete all jobs endpoint (MUST be before /:id route)
+router.delete('/delete-all', async (req, res) => {
+  const { pool } = req.app.locals;
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    console.log('🗑️  Starting delete all jobs operation...');
+    
+    // Get count of jobs before deletion
+    const countResult = await client.query('SELECT COUNT(*) as total FROM jobs');
+    const totalJobs = parseInt(countResult.rows[0].total);
+    
+    if (totalJobs === 0) {
+      await client.query('COMMIT');
+      return res.json({ 
+        message: 'No jobs to delete',
+        deletedJobsCount: 0,
+        deletedSlotsCount: 0,
+        deletedConflictsCount: 0,
+        deletedDependenciesCount: 0,
+        deletedRoutingsCount: 0
+      });
+    }
+    
+    console.log(`   Found ${totalJobs} jobs to delete`);
+    
+    // 1. Delete all schedule slots
+    const slotsResult = await client.query('DELETE FROM schedule_slots');
+    console.log(`   Deleted ${slotsResult.rowCount} schedule slots`);
+    
+    // 2. Delete all scheduling conflicts
+    const conflictsResult = await client.query('DELETE FROM scheduling_conflicts');
+    console.log(`   Deleted ${conflictsResult.rowCount} scheduling conflicts`);
+    
+    // 3. Delete all job dependencies
+    const depsResult = await client.query('DELETE FROM job_dependencies');
+    console.log(`   Deleted ${depsResult.rowCount} job dependencies`);
+    
+    // 4. Delete all job routings
+    const routingsResult = await client.query('DELETE FROM job_routings');
+    console.log(`   Deleted ${routingsResult.rowCount} job routings`);
+    
+    // 5. Delete all jobs
+    const jobsResult = await client.query('DELETE FROM jobs');
+    console.log(`   Deleted ${jobsResult.rowCount} jobs`);
+    
+    await client.query('COMMIT');
+    console.log(`✅ Successfully deleted all ${totalJobs} jobs and related data`);
+    
+    res.json({ 
+      message: `Successfully deleted all ${totalJobs} jobs and related data`,
+      deletedJobsCount: jobsResult.rowCount,
+      deletedSlotsCount: slotsResult.rowCount,
+      deletedConflictsCount: conflictsResult.rowCount,
+      deletedDependenciesCount: depsResult.rowCount,
+      deletedRoutingsCount: routingsResult.rowCount
+    });
+    
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error deleting all jobs:', error);
+    res.status(500).json({ error: 'Failed to delete all jobs' });
+  } finally {
+    client.release();
+  }
+});
+
 // Delete job
 router.delete('/:id', async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
     
-    const result = await pool.query('DELETE FROM jobs WHERE id = $1 RETURNING *', [id]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Job not found' });
+    // Start a transaction to handle cascading deletes
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      // Get job info for logging
+      const jobInfo = await client.query('SELECT job_number FROM jobs WHERE id = $1', [id]);
+      if (jobInfo.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Job not found' });
+      }
+      
+      const jobNumber = jobInfo.rows[0].job_number;
+      console.log(`🗑️ Deleting job ${jobNumber} (ID: ${id})`);
+      
+      // Delete related records in order to avoid foreign key violations
+      
+      // 1. Delete schedule slots
+      const slotsResult = await client.query('DELETE FROM schedule_slots WHERE job_id = $1', [id]);
+      console.log(`   Deleted ${slotsResult.rowCount} schedule slots`);
+      
+      // 2. Delete scheduling conflicts
+      const conflictsResult = await client.query('DELETE FROM scheduling_conflicts WHERE job_id = $1', [id]);
+      console.log(`   Deleted ${conflictsResult.rowCount} scheduling conflicts`);
+      
+      // 3. Delete job dependencies (both as dependent and prerequisite)
+      const depsResult1 = await client.query('DELETE FROM job_dependencies WHERE dependent_job_id = $1', [id]);
+      const depsResult2 = await client.query('DELETE FROM job_dependencies WHERE prerequisite_job_id = $1', [id]);
+      console.log(`   Deleted ${depsResult1.rowCount + depsResult2.rowCount} job dependencies`);
+      
+      // 4. Delete job routings
+      const routingsResult = await client.query('DELETE FROM job_routings WHERE job_id = $1', [id]);
+      console.log(`   Deleted ${routingsResult.rowCount} job routings`);
+      
+      // 5. Update child jobs to remove parent reference
+      const childrenResult = await client.query(
+        'UPDATE jobs SET parent_job_id = NULL WHERE parent_job_id = $1 RETURNING job_number', 
+        [id]
+      );
+      if (childrenResult.rowCount > 0) {
+        console.log(`   Updated ${childrenResult.rowCount} child jobs: ${childrenResult.rows.map(r => r.job_number).join(', ')}`);
+      }
+      
+      // 6. Finally delete the job itself
+      const result = await client.query('DELETE FROM jobs WHERE id = $1 RETURNING *', [id]);
+      
+      await client.query('COMMIT');
+      console.log(`✅ Successfully deleted job ${jobNumber}`);
+      
+      res.json({ 
+        message: `Job ${jobNumber} deleted successfully`,
+        deletedSlotsCount: slotsResult.rowCount,
+        deletedConflictsCount: conflictsResult.rowCount,
+        deletedDependenciesCount: depsResult1.rowCount + depsResult2.rowCount,
+        deletedRoutingsCount: routingsResult.rowCount,
+        updatedChildrenCount: childrenResult.rowCount
+      });
+      
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
     
-    res.json({ message: 'Job deleted successfully' });
   } catch (error) {
     console.error('Error deleting job:', error);
     res.status(500).json({ error: 'Failed to delete job' });
@@ -360,6 +487,9 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
     
     console.log(`Parsed ${parsedData.jobs.length} jobs and ${parsedData.routings.length} routing lines`);
     
+    // Initialize priority service
+    const priorityService = new PriorityService(pool);
+    
     // Start database transaction
     const client = await pool.connect();
     try {
@@ -369,6 +499,7 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
       const insertedRoutings = [];
       const assemblyRelationships = [];
       const vendorData = [];
+      const priorityUpdates = [];
       
       // Insert jobs first
       for (const job of parsedData.jobs) {
@@ -393,14 +524,21 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
           continue;
         }
         
+        // Ensure customer tier exists
+        await priorityService.ensureCustomerTier(job.customer_name);
+        
+        // Check for expedite status
+        const isExpedite = priorityService.checkExpediteStatus(job.order_date, job.promised_date);
+        
         const result = await client.query(`
           INSERT INTO jobs (
             job_number, customer_name, part_name, part_number, quantity,
-            priority, estimated_hours, due_date, promised_date, start_date, status,
+            priority, estimated_hours, due_date, promised_date, order_date, start_date, status,
             material, special_instructions, job_boss_data, job_type, 
             is_assembly_parent, assembly_sequence, link_material,
-            material_lead_days, material_due_date, material_req
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+            material_lead_days, material_due_date, material_req,
+            is_stock_job, stock_number, is_expedite, has_outsourcing, outsourcing_lead_days
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
           ON CONFLICT (job_number) DO UPDATE SET
             customer_name = EXCLUDED.customer_name,
             part_name = EXCLUDED.part_name,
@@ -422,15 +560,23 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
             material_lead_days = EXCLUDED.material_lead_days,
             material_due_date = EXCLUDED.material_due_date,
             material_req = EXCLUDED.material_req,
+            is_stock_job = EXCLUDED.is_stock_job,
+            stock_number = EXCLUDED.stock_number,
+            order_date = EXCLUDED.order_date,
+            is_expedite = EXCLUDED.is_expedite,
+            has_outsourcing = EXCLUDED.has_outsourcing,
+            outsourcing_lead_days = EXCLUDED.outsourcing_lead_days,
             updated_at = CURRENT_TIMESTAMP
           RETURNING *
         `, [
           job.job_number, job.customer_name, job.part_name, job.part_number,
           job.quantity, job.priority, job.estimated_hours, job.due_date,
-          job.promised_date, job.start_date, job.status, job.material,
+          job.promised_date, job.order_date, job.start_date, job.status, job.material,
           job.special_instructions, job.job_boss_data, job.job_type,
           job.is_assembly_parent, job.assembly_sequence, job.link_material,
-          job.material_lead_days, job.material_due_date, job.material_req
+          job.material_lead_days, job.material_due_date, job.material_req,
+          job.is_stock_job, job.stock_number, isExpedite, 
+          job.has_outsourcing || false, job.outsourcing_lead_days || 0
         ]);
         
         insertedJobs.push(result.rows[0]);
@@ -519,6 +665,17 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
         `, [vendorName, leadDays]);
       }
       
+      // Calculate priority scores for all imported jobs
+      console.log('Calculating priority scores for imported jobs...');
+      for (const job of insertedJobs) {
+        const priorityScore = await priorityService.calculatePriorityScore(job.id);
+        priorityUpdates.push({
+          job_number: job.job_number,
+          priority_score: priorityScore,
+          customer_tier: job.customer_name
+        });
+      }
+      
       await client.query('COMMIT');
       
       // Clean up uploaded file
@@ -531,8 +688,10 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
         assemblyGroups: parsedData.assemblyGroups.size,
         assemblyRelationships: assemblyRelationships.length,
         vendorsFound: vendorData.length,
+        priorityScoresCalculated: priorityUpdates.length,
         jobs: insertedJobs,
-        routings: insertedRoutings
+        routings: insertedRoutings,
+        priorityUpdates: priorityUpdates
       };
       
       if (assemblyRelationships.length > 0) {
@@ -624,8 +783,18 @@ router.get('/:id/routings', async (req, res) => {
     const result = await pool.query(`
       SELECT 
         jr.id, jr.operation_number, jr.operation_name, jr.machine_id,
-        jr.machine_group_id, jr.sequence_order, jr.estimated_hours, jr.notes
+        jr.machine_group_id, jr.sequence_order, jr.estimated_hours, jr.notes,
+        m.name as machine_name, m.model as machine_model,
+        ss.id as schedule_slot_id, ss.start_datetime, ss.end_datetime, 
+        ss.machine_id as scheduled_machine_id, ss.employee_id as scheduled_employee_id,
+        sm.name as scheduled_machine_name, sm.model as scheduled_machine_model,
+        e.first_name || ' ' || e.last_name as scheduled_employee_name,
+        ss.status as schedule_status, ss.duration_minutes, ss.locked as slot_locked
       FROM job_routings jr
+      LEFT JOIN machines m ON jr.machine_id = m.id
+      LEFT JOIN schedule_slots ss ON jr.id = ss.job_routing_id
+      LEFT JOIN machines sm ON ss.machine_id = sm.id
+      LEFT JOIN employees e ON ss.employee_id = e.id
       WHERE jr.job_id = $1
       ORDER BY jr.sequence_order, jr.operation_number
     `, [id]);

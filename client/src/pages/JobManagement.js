@@ -22,34 +22,47 @@ import {
   Avatar,
   Divider,
   Alert,
+  List,
+  ListItem,
+  ListItemText,
+  Link,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
+  DeleteSweep as DeleteSweepIcon,
   Upload as UploadIcon,
   Assessment as AssessmentIcon,
   Search as SearchIcon,
   Visibility as VisibilityIcon,
   Build as BuildIcon,
   Group as GroupIcon,
+  Lock as LockIcon,
 } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { format, parseISO, isPast, isToday, isTomorrow } from 'date-fns';
 import { useDropzone } from 'react-dropzone';
 import toast from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 
 import { apiService } from '../services/apiService';
 import Logo from '../components/Logo';
 import RoutingSelector from '../components/RoutingSelector';
+import AssemblyManager from '../components/AssemblyManager';
 
 const JobManagement = () => {
+  const navigate = useNavigate();
   const [jobs, setJobs] = useState([]);
+  const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
+  const [assemblyManagerOpen, setAssemblyManagerOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState(null);
   const [editingJob, setEditingJob] = useState(null);
+  const [jobRoutings, setJobRoutings] = useState([]);
   const [filters, setFilters] = useState({
     status: '',
     priority: '',
@@ -81,6 +94,7 @@ const JobManagement = () => {
 
   useEffect(() => {
     fetchJobs();
+    fetchMachines();
   }, []);
 
   const fetchJobs = async () => {
@@ -93,6 +107,15 @@ const JobManagement = () => {
       toast.error('Failed to load jobs');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchMachines = async () => {
+    try {
+      const response = await apiService.get('/api/machines');
+      setMachines(response.data);
+    } catch (error) {
+      console.error('Error fetching machines:', error);
     }
   };
 
@@ -134,12 +157,47 @@ const JobManagement = () => {
       } else {
         await apiService.jobs.create(formData);
         toast.success('Job created successfully');
+        
+        // Auto-detect assembly relationships after creating new job
+        try {
+          const allJobNumbers = [...jobs.map(job => job.job_number), formData.job_number];
+          const detectResponse = await apiService.post('/api/assembly/detect-relationships', {
+            job_numbers: allJobNumbers
+          });
+          
+          if (detectResponse.data.detected > 0) {
+            toast.success(`Auto-detected assembly relationship for ${formData.job_number}`, {
+              duration: 4000
+            });
+          }
+        } catch (detectError) {
+          console.warn('Auto-detection failed:', detectError);
+          // Don't show error to user, just log it
+        }
       }
       setDialogOpen(false);
       fetchJobs();
     } catch (error) {
       console.error('Error saving job:', error);
       toast.error('Failed to save job');
+    }
+  };
+
+  const handleLockJob = async (jobId, lock = true) => {
+    try {
+      const endpoint = lock ? `/api/locks/job/${jobId}/lock` : `/api/locks/job/${jobId}/unlock`;
+      const response = await apiService.post(endpoint, {
+        reason: lock ? 'Manual lock - Protected from changes' : undefined
+      });
+      
+      if (response.data.success) {
+        toast.success(lock ? 'Job locked successfully' : 'Job unlocked successfully');
+        fetchJobs(); // Refresh data
+        setSelectedJob(null);
+      }
+    } catch (error) {
+      console.error('Error toggling lock:', error);
+      toast.error(error.response?.data?.error || `Failed to ${lock ? 'lock' : 'unlock'} job`);
     }
   };
 
@@ -171,6 +229,18 @@ const JobManagement = () => {
     }
   };
 
+  const handleDeleteAll = async () => {
+    try {
+      const response = await apiService.jobs.deleteAll();
+      toast.success(`${response.data.message}`);
+      setDeleteAllDialogOpen(false);
+      fetchJobs(); // Refresh the jobs list (should be empty now)
+    } catch (error) {
+      console.error('Error deleting all jobs:', error);
+      toast.error('Failed to delete all jobs');
+    }
+  };
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: handleFileUpload,
     accept: {
@@ -196,11 +266,18 @@ const JobManagement = () => {
     }
   };
 
-  const getPriorityColor = (priority) => {
-    if (priority <= 2) return 'error';
-    if (priority <= 4) return 'warning';
-    if (priority <= 6) return 'info';
-    return 'default';
+  const getPriorityColor = (score) => {
+    if (score >= 800) return 'error'; // red - critical
+    if (score >= 600) return 'warning'; // orange - high
+    if (score >= 300) return 'secondary'; // yellow - medium
+    return 'success'; // green - standard
+  };
+
+  const getPriorityLabel = (score) => {
+    if (score >= 800) return 'CRITICAL';
+    if (score >= 600) return 'HIGH';
+    if (score >= 300) return 'MEDIUM';
+    return 'STANDARD';
   };
 
   const getDueDateStatus = (dueDate) => {
@@ -214,9 +291,8 @@ const JobManagement = () => {
   };
 
   const getMachineName = (machineId) => {
-    // This would need to be populated from the machines data
-    // For now, return a placeholder
-    return `Machine ${machineId}`;
+    const machine = machines.find(m => m.id === machineId);
+    return machine ? machine.name : `Machine ${machineId}`;
   };
 
   const getGroupName = (groupId) => {
@@ -225,9 +301,31 @@ const JobManagement = () => {
     return `Group ${groupId}`;
   };
 
+  const handleJobClick = async (job) => {
+    setSelectedJob(job);
+    
+    // Fetch job routings with scheduling information
+    try {
+      const response = await apiService.get(`/api/jobs/${job.id}/routings`);
+      setJobRoutings(response.data);
+    } catch (error) {
+      console.error('Error fetching job routings:', error);
+      setJobRoutings([]);
+    }
+  };
+
+  const handleNavigateToSchedule = (routing) => {
+    if (routing.start_datetime) {
+      // Format the date for the schedule view URL
+      const scheduleDate = format(parseISO(routing.start_datetime), 'yyyy-MM-dd');
+      // Navigate to schedule view with the specific date
+      navigate(`/schedule?date=${scheduleDate}`);
+    }
+  };
+
   const filteredJobs = jobs.filter(job => {
     const matchesStatus = !filters.status || job.status === filters.status;
-    const matchesPriority = !filters.priority || job.priority === parseInt(filters.priority);
+    const matchesPriority = !filters.priority || job.priority_score >= parseInt(filters.priority);
     const matchesCustomer = !filters.customer || 
       job.customer_name?.toLowerCase().includes(filters.customer.toLowerCase());
     const matchesSearch = !searchTerm || 
@@ -242,27 +340,33 @@ const JobManagement = () => {
     const dueDateStatus = getDueDateStatus(job.due_date);
     
     return (
-      <Card sx={{ height: '100%' }}>
+      <Card className="industrial-card" sx={{ height: '100%' }}>
         <CardContent>
           <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
             <Box display="flex" alignItems="center">
-              <Avatar sx={{ mr: 2, bgcolor: 'primary.main' }}>
+              <Avatar sx={{ mr: 2, bgcolor: '#00d4ff', color: '#0a0e1a' }}>
                 {job.job_number?.slice(0, 2)}
               </Avatar>
               <Box>
-                <Typography variant="h6" component="div">
+                <Typography variant="h6" component="div" sx={{ color: '#e4e6eb', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
                   {job.job_number}
+                  {job.schedule_locked && (
+                    <Tooltip title={`Locked: ${job.lock_reason || 'Started operation'}`}>
+                      <LockIcon sx={{ fontSize: '1rem', color: 'warning.main' }} />
+                    </Tooltip>
+                  )}
                 </Typography>
-                <Typography variant="body2" color="textSecondary">
+                <Typography variant="body2" sx={{ color: '#9ca3af' }}>
                   {job.part_name}
                 </Typography>
               </Box>
             </Box>
             <Box display="flex" flexDirection="column" alignItems="flex-end" gap={1}>
               <Chip
-                label={`P${job.priority}`}
+                label={job.priority_score || 0}
                 size="small"
-                color={getPriorityColor(job.priority)}
+                color={getPriorityColor(job.priority_score || 0)}
+                sx={{ fontWeight: 'bold' }}
               />
               <Chip
                 label={job.status}
@@ -273,22 +377,22 @@ const JobManagement = () => {
           </Box>
 
           <Box mb={2}>
-            <Typography variant="body2" gutterBottom>
+            <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
               <strong>Customer:</strong> {job.customer_name}
             </Typography>
-            <Typography variant="body2" gutterBottom>
+            <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
               <strong>Part Number:</strong> {job.part_number}
             </Typography>
-            <Typography variant="body2" gutterBottom>
+            <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
               <strong>Quantity:</strong> {job.quantity}
             </Typography>
             {job.estimated_hours && (
-              <Typography variant="body2" gutterBottom>
+              <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
                 <strong>Est. Hours:</strong> {job.estimated_hours}
               </Typography>
             )}
             {job.material && (
-              <Typography variant="body2" gutterBottom>
+              <Typography variant="body2" gutterBottom sx={{ color: '#e4e6eb' }}>
                 <strong>Material:</strong> {job.material}
               </Typography>
             )}
@@ -301,7 +405,7 @@ const JobManagement = () => {
               color={dueDateStatus.color}
               variant="outlined"
             />
-            <Typography variant="body2" color="textSecondary">
+            <Typography variant="body2" sx={{ color: '#9ca3af' }}>
               {job.scheduled_count || 0} schedules
             </Typography>
           </Box>
@@ -309,12 +413,12 @@ const JobManagement = () => {
           <Divider sx={{ my: 2 }} />
 
           <Box display="flex" justifyContent="space-between" alignItems="center">
-            <Typography variant="body2" color="textSecondary">
+            <Typography variant="body2" sx={{ color: '#9ca3af' }}>
               {job.total_scheduled_hours || 0}h scheduled
             </Typography>
             <Box>
               <Tooltip title="View Details">
-                <IconButton size="small" onClick={() => setSelectedJob(job)}>
+                <IconButton size="small" onClick={() => handleJobClick(job)}>
                   <VisibilityIcon />
                 </IconButton>
               </Tooltip>
@@ -337,9 +441,9 @@ const JobManagement = () => {
 
   if (loading) {
     return (
-      <Box>
-        <LinearProgress />
-        <Typography variant="h6" sx={{ mt: 2 }}>
+      <Box className="fade-in-up">
+        <LinearProgress sx={{ bgcolor: '#1a2030', '& .MuiLinearProgress-bar': { bgcolor: '#00d4ff' } }} />
+        <Typography variant="h6" sx={{ mt: 2, color: '#e4e6eb' }}>
           Loading jobs...
         </Typography>
       </Box>
@@ -347,7 +451,7 @@ const JobManagement = () => {
   }
 
   return (
-    <Box>
+    <Box className="fade-in-up">
       <Box sx={{ 
         display: 'flex', 
         alignItems: 'center', 
@@ -357,16 +461,11 @@ const JobManagement = () => {
         borderBottom: '1px solid',
         borderColor: 'divider'
       }}>
-        <Logo 
-          variant="horizontal" 
-          color="primary" 
-          height={36}
-        />
         <Box sx={{ flexGrow: 1 }}>
-          <Typography variant="h4" gutterBottom={false}>
+          <Typography variant="h4" gutterBottom={false} sx={{ color: '#e4e6eb', fontWeight: 700 }}>
             Job Management
           </Typography>
-          <Typography variant="subtitle1" color="text.secondary">
+          <Typography variant="subtitle1" sx={{ color: '#9ca3af' }}>
             Manage production jobs and import from JobBoss ERP
           </Typography>
         </Box>
@@ -379,6 +478,24 @@ const JobManagement = () => {
             Import CSV
           </Button>
           <Button
+            variant="outlined"
+            color="error"
+            startIcon={<DeleteSweepIcon />}
+            onClick={() => setDeleteAllDialogOpen(true)}
+            sx={{ mr: 2 }}
+            disabled={jobs.length === 0}
+          >
+            Delete All Jobs
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<BuildIcon />}
+            onClick={() => setAssemblyManagerOpen(true)}
+            sx={{ mr: 2 }}
+          >
+            Assembly Manager
+          </Button>
+          <Button
             variant="contained"
             startIcon={<AddIcon />}
             onClick={() => handleOpenDialog()}
@@ -388,7 +505,7 @@ const JobManagement = () => {
         </Box>
 
       {/* Filters and Search */}
-      <Card sx={{ mb: 3 }}>
+      <Card className="industrial-card" sx={{ mb: 3 }}>
         <CardContent>
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} sm={6} md={3}>
@@ -398,7 +515,7 @@ const JobManagement = () => {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 InputProps={{
-                  startAdornment: <SearchIcon sx={{ mr: 1, color: 'text.secondary' }} />,
+                  startAdornment: <SearchIcon sx={{ mr: 1, color: '#9ca3af' }} />,
                 }}
               />
             </Grid>
@@ -609,7 +726,7 @@ const JobManagement = () => {
             }}
           >
             <input {...getInputProps()} />
-            <UploadIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+            <UploadIcon sx={{ fontSize: 48, color: '#9ca3af', mb: 2 }} />
             {isDragActive ? (
               <Typography>Drop the CSV file here...</Typography>
             ) : (
@@ -617,13 +734,52 @@ const JobManagement = () => {
                 Drag and drop a CSV file here, or click to select file
               </Typography>
             )}
-            <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+            <Typography variant="body2" sx={{ mt: 1, color: '#9ca3af' }}>
               Supported format: CSV files exported from JobBoss
             </Typography>
           </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setImportDialogOpen(false)}>Cancel</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Delete All Jobs Confirmation Dialog */}
+      <Dialog open={deleteAllDialogOpen} onClose={() => setDeleteAllDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <DeleteSweepIcon />
+          Delete All Jobs
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Are you sure you want to delete <strong>ALL {jobs.length} jobs</strong> and their related data?
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 2, color: '#9ca3af' }}>
+            This action will permanently delete:
+          </Typography>
+          <Box component="ul" sx={{ pl: 2, color: '#9ca3af' }}>
+            <li>All job records</li>
+            <li>All job routings/operations</li>
+            <li>All schedule slots</li>
+            <li>All scheduling conflicts</li>
+            <li>All job dependencies</li>
+          </Box>
+          <Alert severity="error" sx={{ mt: 2 }}>
+            <strong>This action cannot be undone!</strong> Make sure you have a backup of your data if needed.
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteAllDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleDeleteAll} 
+            color="error" 
+            variant="contained"
+            startIcon={<DeleteSweepIcon />}
+          >
+            Delete All {jobs.length} Jobs
+          </Button>
         </DialogActions>
       </Dialog>
 
@@ -642,42 +798,42 @@ const JobManagement = () => {
             <DialogContent>
               <Grid container spacing={2}>
                 <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle1" gutterBottom>
+                  <Typography variant="subtitle1" gutterBottom sx={{ color: '#e4e6eb', fontWeight: 600 }}>
                     Part Information
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Part Name:</strong> {selectedJob.part_name}
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Part Number:</strong> {selectedJob.part_number}
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Quantity:</strong> {selectedJob.quantity}
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Material:</strong> {selectedJob.material}
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Material Size:</strong> {selectedJob.material_size}
                   </Typography>
                 </Grid>
                 <Grid item xs={12} md={6}>
-                  <Typography variant="subtitle1" gutterBottom>
+                  <Typography variant="subtitle1" gutterBottom sx={{ color: '#e4e6eb', fontWeight: 600 }}>
                     Job Details
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Customer:</strong> {selectedJob.customer_name}
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Priority:</strong> {selectedJob.priority}
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Due Date:</strong> {selectedJob.due_date ? format(parseISO(selectedJob.due_date), 'MMM dd, yyyy') : 'Not set'}
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Status:</strong> {selectedJob.status}
                   </Typography>
-                  <Typography variant="body2">
+                  <Typography variant="body2" sx={{ color: '#e4e6eb', mb: 1 }}>
                     <strong>Estimated Hours:</strong> {
                       selectedJob.routings && selectedJob.routings.length > 0
                         ? selectedJob.routings.reduce((total, routing) => total + (parseFloat(routing.estimated_hours) || 0), 0).toFixed(2) + 'h'
@@ -685,62 +841,98 @@ const JobManagement = () => {
                     }
                   </Typography>
                 </Grid>
-                {selectedJob.routings && selectedJob.routings.length > 0 && (
+                {jobRoutings && jobRoutings.length > 0 && (
                   <Grid item xs={12}>
-                    <Typography variant="subtitle1" gutterBottom>
-                      Operations/Routings
+                    <Typography variant="subtitle1" gutterBottom sx={{ color: '#e4e6eb', fontWeight: 600 }}>
+                      Operations & Routing
                     </Typography>
-                    <Box>
-                      {selectedJob.routings.map((routing, index) => (
-                        <Box 
-                          key={routing.id || index}
-                          sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 1, 
-                            mb: 1,
-                            p: 1,
-                            border: '1px solid',
-                            borderColor: 'divider',
-                            borderRadius: 1
-                          }}
-                        >
-                          <Chip 
-                            label={`OP-${routing.operation_number}`} 
-                            size="small"
-                            color="primary"
-                            variant="outlined"
+                    <List dense>
+                      {jobRoutings.map((routing) => (
+                        <ListItem key={routing.id} sx={{ 
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          borderRadius: 1,
+                          mb: 1,
+                          px: 2
+                        }}>
+                          <ListItemText
+                            primary={
+                              <Box display="flex" alignItems="center" gap={1}>
+                                <Chip 
+                                  size="small" 
+                                  label={`Op ${routing.operation_number}`}
+                                  color="primary"
+                                  variant="outlined"
+                                />
+                                <Typography variant="body2" fontWeight="bold" sx={{ color: '#e4e6eb' }}>
+                                  {routing.machine_name || routing.operation_name}
+                                </Typography>
+                                {routing.machine_name && routing.operation_name !== routing.machine_name && (
+                                  <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                                    ({routing.operation_name})
+                                  </Typography>
+                                )}
+                                {routing.schedule_slot_id && (
+                                  <Chip 
+                                    size="small" 
+                                    label="Scheduled"
+                                    color="success"
+                                    variant="filled"
+                                  />
+                                )}
+                              </Box>
+                            }
+                            secondary={
+                              <Box sx={{ mt: 0.5 }}>
+                                <Typography variant="caption" display="block" sx={{ color: '#9ca3af' }}>
+                                  <strong>Estimated Hours:</strong> {routing.estimated_hours || 'Not set'}
+                                </Typography>
+                                {routing.schedule_slot_id && (
+                                  <>
+                                    <Typography variant="caption" display="block" sx={{ color: 'success.main' }}>
+                                      <strong>Scheduled Machine:</strong> {routing.scheduled_machine_name || 'Unknown'}
+                                    </Typography>
+                                    <Typography variant="caption" display="block" sx={{ color: 'success.main' }}>
+                                      <strong>Assigned Operator:</strong> {routing.scheduled_employee_name || 'Unassigned'}
+                                    </Typography>
+                                    <Typography variant="caption" display="block" sx={{ color: 'success.main' }}>
+                                      <strong>Start Time:</strong> {routing.start_datetime ? (
+                                        <Link 
+                                          component="button"
+                                          variant="caption"
+                                          onClick={() => handleNavigateToSchedule(routing)}
+                                          sx={{ 
+                                            color: 'success.main', 
+                                            textDecoration: 'underline',
+                                            cursor: 'pointer',
+                                            ml: 0.5
+                                          }}
+                                        >
+                                          {format(parseISO(routing.start_datetime), 'MMM dd, h:mm a')}
+                                        </Link>
+                                      ) : 'Not set'}
+                                    </Typography>
+                                    <Typography variant="caption" display="block" sx={{ color: 'success.main' }}>
+                                      <strong>Duration:</strong> {routing.duration_minutes ? `${Math.round(routing.duration_minutes / 60 * 100) / 100}h` : 'Not set'}
+                                    </Typography>
+                                  </>
+                                )}
+                                {routing.notes && (
+                                  <Typography variant="caption" display="block" sx={{ fontStyle: 'italic', color: '#9ca3af' }}>
+                                    <strong>Notes:</strong> {routing.notes}
+                                  </Typography>
+                                )}
+                              </Box>
+                            }
                           />
-                          <Typography variant="body2" fontWeight="medium">
-                            {routing.operation_name}
-                          </Typography>
-                          {routing.machine_id && (
-                            <Chip
-                              icon={<BuildIcon />}
-                              label={getMachineName(routing.machine_id)}
-                              size="small"
-                              variant="outlined"
-                            />
-                          )}
-                          {routing.machine_group_id && (
-                            <Chip
-                              icon={<GroupIcon />}
-                              label={getGroupName(routing.machine_group_id)}
-                              size="small"
-                              variant="outlined"
-                            />
-                          )}
-                          <Typography variant="body2" color="text.secondary">
-                            {routing.estimated_hours}h
-                          </Typography>
-                        </Box>
+                        </ListItem>
                       ))}
-                    </Box>
+                    </List>
                   </Grid>
                 )}
                 {selectedJob.operations && selectedJob.operations.length > 0 && (
                   <Grid item xs={12}>
-                    <Typography variant="subtitle1" gutterBottom>
+                    <Typography variant="subtitle1" gutterBottom sx={{ color: '#e4e6eb', fontWeight: 600 }}>
                       Legacy Operations
                     </Typography>
                     <Box display="flex" flexWrap="wrap" gap={1}>
@@ -752,10 +944,10 @@ const JobManagement = () => {
                 )}
                 {selectedJob.special_instructions && (
                   <Grid item xs={12}>
-                    <Typography variant="subtitle1" gutterBottom>
+                    <Typography variant="subtitle1" gutterBottom sx={{ color: '#e4e6eb', fontWeight: 600 }}>
                       Special Instructions
                     </Typography>
-                    <Typography variant="body2">
+                    <Typography variant="body2" sx={{ color: '#e4e6eb' }}>
                       {selectedJob.special_instructions}
                     </Typography>
                   </Grid>
@@ -764,10 +956,41 @@ const JobManagement = () => {
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setSelectedJob(null)}>Close</Button>
+              {selectedJob.schedule_locked ? (
+                <Button
+                  color="warning"
+                  startIcon={<LockIcon />}
+                  onClick={() => handleLockJob(selectedJob.id, false)}
+                >
+                  Unlock Job
+                </Button>
+              ) : (
+                <Button
+                  color="warning"
+                  startIcon={<LockIcon />}
+                  onClick={() => handleLockJob(selectedJob.id, true)}
+                >
+                  Lock Job
+                </Button>
+              )}
+              <Button
+                color="error"
+                onClick={() => handleDelete(selectedJob)}
+                disabled={selectedJob.schedule_locked}
+              >
+                Delete Job
+              </Button>
             </DialogActions>
           </>
         )}
       </Dialog>
+
+      {/* Assembly Manager */}
+      <AssemblyManager 
+        open={assemblyManagerOpen}
+        onClose={() => setAssemblyManagerOpen(false)}
+        jobs={jobs}
+      />
     </Box>
   );
 };

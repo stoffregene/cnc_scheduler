@@ -34,12 +34,21 @@ A comprehensive React/Node.js/PostgreSQL application for CNC manufacturing job s
 - [x] Operation-machine compatibility validation
 - [x] Unschedule/reschedule job functionality
 - [x] **Operation sequence validation (prevent out-of-order dragging)** ✅ NEW
+- [x] **Job detail modals with comprehensive scheduling information** ✅ NEW
+- [x] **Clickable navigation to schedule calendar from job details** ✅ NEW
 
 ### Intelligent Validation Features:
 1. **Machine Compatibility**: Prevents moving production operations to INSPECT machines and vice versa
 2. **Employee Assignment**: Automatically finds qualified operators when moving between machines
 3. **Sequence Validation**: Prevents dragging operations out of their proper sequence order
 4. **Conflict Resolution**: Offers automatic job rescheduling for invalid moves
+
+### Job Detail Modal Features:
+1. **Comprehensive Scheduling Display**: Shows scheduled machine name, assigned operator, start time, and actual duration for each operation
+2. **Visual Status Indicators**: Green "Scheduled" chips for operations that have been scheduled
+3. **Direct Calendar Navigation**: Clickable start times that navigate to the specific date in schedule view
+4. **Consistent Interface**: Unified modal design across all pages (Scheduling, Machine Queues, Job Management, Dashboard)
+5. **Clean Operation Display**: Shows operation number only (e.g., "Op 1") without redundant sequence information
 
 ### Key Files:
 - `client/src/pages/ScheduleView.js` - Main drag-and-drop scheduling interface
@@ -63,23 +72,25 @@ const validateOperationSequence = async (draggedSlot, targetDay) => {
 
 ## Phase 3: Advanced Features 🚧 IN PROGRESS
 ### Current Status:
-- [x] ~~Build collision detection and automatic rescheduling on conflicts~~
-- [ ] Add employee workload visualization 
-- [ ] Implement conflict resolution interface
-- [ ] Build job displacement analysis - "what if" rescheduling impact visualization
+- [x] Build collision detection and automatic rescheduling on conflicts
+- [x] Fix auto-scheduling workload distribution (session tracking)
+- [ ] Implement priority-based displacement system
+- [ ] Add job locking mechanism
+- [ ] Build displacement logging system
+- [ ] Add schedule optimization features
 
 ### Next Priority Tasks:
-1. **Collision Detection** - Detect overlapping schedules and auto-resolve
-2. **Employee Workload Visualization** - Show employee capacity and utilization
-3. **Conflict Resolution Interface** - UI for managing scheduling conflicts
-4. **Impact Analysis** - Show downstream effects of schedule changes
+1. **Priority System** - Customer tiers and urgency-based scoring
+2. **Lock System** - Prevent displacement of started/critical jobs
+3. **Displacement Engine** - Smart job displacement with cascade handling
+4. **Optimization** - Global schedule optimization algorithm
 
 ## API Endpoints
 
 ### Jobs
 - `GET /api/jobs` - List all jobs with routings
 - `GET /api/jobs/:id` - Get specific job details
-- `GET /api/jobs/:id/routings` - Get job routing sequence for validation
+- `GET /api/jobs/:id/routings` - Get job routings with scheduling information (machine names, operators, start times)
 - `POST /api/jobs` - Create new job
 - `PUT /api/jobs/:id` - Update job
 - `DELETE /api/jobs/:id` - Delete job
@@ -235,12 +246,97 @@ node server/fix-working-hours-function.js
 10. ✅ **Drag-and-Drop Removal** - Completely removed drag-and-drop functionality per user feedback
 11. ✅ **Machine Selection Enhancement** - Added machine/machine group selection to manual rescheduling
 12. ✅ **Machine Swapping Capability** - Full support for changing operation machines with operator reassignment
+13. ✅ **Job Detail Modals Enhancement** - Added comprehensive scheduling information display to all job modals
+14. ✅ **Calendar Navigation Links** - Added clickable start times that navigate directly to schedule view
+15. ✅ **Modal UI Cleanup** - Removed redundant sequence fields, simplified operation display
 
 ### Outstanding Issues to Fix:
 - **Partial Reschedule Bug**: When rescheduling later operations (HMC, INSPECT), the system says "Job already scheduled" because SAW operation still exists. Need to improve the scheduling service to handle partial reschedules properly.
 
+## Priority-Based Displacement System (IN DEVELOPMENT)
+
+### Priority Scoring System
+**Customer Tiers:**
+- **Top Tier (400 pts)**: MAREL, POUL, NCS (>80% of business)
+- **Mid Tier (200 pts)**: ACCU MOLD, GRIPTITE, KATECHO
+- **Standard Tier (0 pts)**: All other customers
+
+**Priority Calculation (0-1000 scale):**
+1. Customer Tier: 0-400 points (highest weight)
+2. Already Late: 250 points (past promised date)
+3. Expedite Flag: 200 points (<28 days order-to-promise)
+4. Days to Promised: 0-150 points (urgency factor)
+5. Job Type: 50 points (assembly parents)
+6. Assembly Children: Parent score + 50 points
+7. Outsourcing Lead Time: 0-100 points (5 pts/day)
+
+**Color Coding:**
+- 800-1000: Red (#ef4444) - Critical
+- 600-799: Orange (#f97316) - High
+- 300-599: Yellow (#eab308) - Medium
+- 0-299: Green (#22c55e) - Standard
+
+### Lock System
+**Auto-Lock Triggers:**
+- Operations marked as started/in_progress/completed
+- Manual lock via Schedule View or Job Details
+- Assembly children auto-lock when parent is locked
+
+**Lock Rules:**
+- Only unlocked operations can be displaced
+- Locked jobs show with dark gray background (#1f2937) and orange border
+- Override requires confirmation dialog
+- Locks remain until manually removed (no expiration)
+
+### Displacement Rules
+**Displacement Triggers:**
+- CSV imports with high-priority jobs
+- Schedule All operation
+- Manual "Optimize All" button
+
+**Displacement Thresholds:**
+- Minimum 15% priority difference required
+- Firm Zone Protection: Jobs within 14 days of promise date cannot be displaced
+- Assembly dependencies are never broken
+
+**Smart Placement:**
+- Respects explicit machine assignments from routings
+- Can swap within machine groups for flexibility
+- No automatic batching during displacement
+
+### Displacement Logging
+**Log Configuration:**
+- 45-day rolling window retention
+- Manual clear capability
+- Bottom console panel on Schedule View
+
+**Log Format:**
+```
+[Timestamp] Action Type
+📦 Job 12345 → May 15
+├─→ Job 12346 → May 16
+│  └─→ Job 12347 → May 17 ⚠️ PAST DUE
+└─→ Job 12348 → May 18
+```
+
+**Tracked Events:**
+- Manual job moves with cascade effects
+- Auto-scheduler displacements
+- CSV imports causing displacements
+- What-if scenarios (preview without execution)
+
+**Undo Capability:**
+- 10-minute window for recent displacements
+- Lightweight state storage (max 10 undo entries)
+
+### Required Acknowledgments
+**Alerts triggered for:**
+- High-priority customer jobs being displaced
+- Jobs pushed past their due date
+- Multiple jobs affected (>5) requires manual confirmation
+
 ---
 
-*Last Updated: August 14, 2025*
+*Last Updated: December 19, 2024*
 *Current Phase: Phase 3 - Advanced Features*
-*Next Milestone: Fix partial reschedule bug and add collision detection*
+*Next Milestone: Implement priority-based displacement system*

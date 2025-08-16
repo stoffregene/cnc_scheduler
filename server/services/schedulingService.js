@@ -76,12 +76,27 @@ class SchedulingService {
   async findAvailableSlots(machineId, employeeId, durationMinutes, preferredStartDate, excludeJobId = null) {
     // Get operator's working hours to determine if chunking is needed
     const workingHours = await this.getOperatorWorkingHours(employeeId, preferredStartDate);
+    
+    // Get employee's shift type to apply efficiency modifier
+    const employeeResult = await this.pool.query(
+      'SELECT shift_type FROM employees WHERE numeric_id = $1 OR employee_id = $1::text',
+      [employeeId]
+    );
+    const shiftType = employeeResult.rows[0]?.shift_type || 'day';
+    
+    // Apply efficiency modifiers: 85% for day shift, 60% for night shift
+    const efficiencyModifier = shiftType === 'day' ? 0.85 : 0.60;
+    
     // For overnight shifts, duration_hours might be negative - use absolute value
-    const maxDailyMinutes = Math.floor(Math.abs(workingHours.duration_hours) * 60);
+    // Apply efficiency modifier to get realistic capacity
+    const rawDailyMinutes = Math.floor(Math.abs(workingHours.duration_hours) * 60);
+    const maxDailyMinutes = Math.floor(rawDailyMinutes * efficiencyModifier);
     
-    console.log(`Operation needs ${durationMinutes} minutes, operator ${employeeId} can work ${maxDailyMinutes} minutes/day (${Math.abs(workingHours.duration_hours)}h shift)`);
+    console.log(`Operation needs ${durationMinutes} minutes`);
+    console.log(`Operator ${employeeId} (${shiftType} shift): ${rawDailyMinutes} min raw capacity`);
+    console.log(`With ${efficiencyModifier * 100}% efficiency: ${maxDailyMinutes} min realistic capacity`);
     
-    // If operation fits within operator's shift, use existing logic
+    // If operation fits within operator's realistic capacity, use existing logic
     if (durationMinutes <= maxDailyMinutes) {
       return this.findConsecutiveSlots(machineId, employeeId, durationMinutes, preferredStartDate, excludeJobId);
     }
@@ -248,7 +263,18 @@ class SchedulingService {
         continue;
       }
       
-      const maxDailyMinutes = Math.floor(Math.abs(workingHours.duration_hours) * 60);
+      // Get employee's shift type to apply efficiency modifier
+      const employeeResult = await this.pool.query(
+        'SELECT shift_type FROM employees WHERE numeric_id = $1 OR employee_id = $1::text',
+        [employeeId]
+      );
+      const shiftType = employeeResult.rows[0]?.shift_type || 'day';
+      
+      // Apply efficiency modifiers: 85% for day shift, 60% for night shift
+      const efficiencyModifier = shiftType === 'day' ? 0.85 : 0.60;
+      
+      const rawDailyMinutes = Math.floor(Math.abs(workingHours.duration_hours) * 60);
+      const maxDailyMinutes = Math.floor(rawDailyMinutes * efficiencyModifier);
       const chunkSize = Math.min(remainingMinutes, maxDailyMinutes);
       
       const startHour = Math.floor(parseFloat(workingHours.start_hour));
@@ -256,6 +282,7 @@ class SchedulingService {
       const endHour = Math.floor(parseFloat(workingHours.end_hour));
       const endMinute = Math.round((parseFloat(workingHours.end_hour) % 1) * 60);
       console.log(`Employee ${employeeId} works ${startHour}:${startMinute.toString().padStart(2, '0')}-${endHour}:${endMinute.toString().padStart(2, '0')} (${workingHours.duration_hours}h) on ${currentDate.toDateString()}`);
+      console.log(`${shiftType} shift efficiency: ${efficiencyModifier * 100}% - Realistic capacity: ${maxDailyMinutes} min`);
       console.log(`Looking for ${chunkSize} minute chunk (${(chunkSize/60).toFixed(1)}h)`);
       
       // Set the search start time to the maximum of employee's shift start and preferred start date
@@ -392,7 +419,7 @@ class SchedulingService {
    * Find best machine-operator pair for a job operation
    * Prioritizes: 1) Original quoted machine, 2) Machine group members, 3) Best operator ranking
    */
-  async findBestMachineOperatorPair(operation, preferredStartDate) {
+  async findBestMachineOperatorPair(operation, preferredStartDate, sessionWorkload = null) {
     // Convert preferred start date to date string
     const dateString = preferredStartDate.toISOString().split('T')[0];
     
@@ -413,7 +440,8 @@ class SchedulingService {
         JOIN operator_machine_assignments oma ON m.id = oma.machine_id
         JOIN employees e ON oma.employee_id = e.id
         LEFT JOIN schedule_slots ss ON (m.id = ss.machine_id OR e.id = ss.employee_id) 
-          AND ss.slot_date = $1::date
+          AND ss.slot_date >= $1::date
+          AND ss.slot_date <= $1::date + interval '7 days'
           AND ss.status IN ('scheduled', 'in_progress')
         WHERE m.id = $2
           AND m.status = 'active'
@@ -429,11 +457,21 @@ class SchedulingService {
       
       if (originalCandidates.rows.length > 0) {
         console.log(`Found ${originalCandidates.rows.length} operators for original machine ${operation.machine_id}`);
+        // Apply session workload penalties if provided
+        if (sessionWorkload) {
+          this.applySessionWorkloadPenalties(originalCandidates.rows, sessionWorkload);
+        }
         return originalCandidates.rows;
+      } else {
+        // CRITICAL: If explicit machine is specified but no operators available today, 
+        // DO NOT fall back to groups - keep looking in the future
+        console.log(`⏰ No operators available today for required machine ${operation.machine_id}`);
+        console.log(`🚫 Routing requires explicit machine - will try future dates`);
+        return []; // Return empty for today, scheduler should try future dates
       }
     }
     
-    // Step 2: If no operators on original machine OR machine group is specified, find group alternatives
+    // Step 2: Only try machine group alternatives if NO explicit machine is specified
     if (operation.machine_group_id) {
       const groupMachineQuery = `
         SELECT 
@@ -462,7 +500,8 @@ class SchedulingService {
         JOIN operator_machine_assignments oma ON m.id = oma.machine_id
         JOIN employees e ON oma.employee_id = e.id
         LEFT JOIN schedule_slots ss ON (m.id = ss.machine_id OR e.id = ss.employee_id) 
-          AND ss.slot_date = $1::date
+          AND ss.slot_date >= $1::date
+          AND ss.slot_date <= $1::date + interval '7 days'
           AND ss.status IN ('scheduled', 'in_progress')
         WHERE mga.machine_group_id = $2
           AND m.status = 'active'
@@ -489,6 +528,11 @@ class SchedulingService {
           console.log(`     - Priority Score: ${candidate.priority_score}`);
         });
         
+        // Apply session workload penalties if provided
+        if (sessionWorkload) {
+          this.applySessionWorkloadPenalties(groupCandidates.rows, sessionWorkload);
+        }
+        
         return groupCandidates.rows;
       }
     }
@@ -510,7 +554,8 @@ class SchedulingService {
       JOIN operator_machine_assignments oma ON m.id = oma.machine_id
       JOIN employees e ON oma.employee_id = e.id
       LEFT JOIN schedule_slots ss ON (m.id = ss.machine_id OR e.id = ss.employee_id) 
-        AND ss.slot_date = $1::date
+        AND ss.slot_date >= $1::date
+        AND ss.slot_date <= $1::date + interval '7 days'
         AND ss.status IN ('scheduled', 'in_progress')
       WHERE m.status = 'active'
         AND e.status = 'active'
@@ -524,18 +569,104 @@ class SchedulingService {
     
     const fallbackCandidates = await this.pool.query(fallbackQuery, [dateString]);
     console.log(`Fallback candidates: ${fallbackCandidates.rows.length}`);
+    
+    // Apply session workload penalties if provided
+    if (sessionWorkload) {
+      this.applySessionWorkloadPenalties(fallbackCandidates.rows, sessionWorkload);
+    }
+    
     return fallbackCandidates.rows;
+  }
+
+  /**
+   * Apply penalties to candidates based on session workload to distribute work more evenly
+   */
+  applySessionWorkloadPenalties(candidates, sessionWorkload) {
+    candidates.forEach(candidate => {
+      const machineKey = `${candidate.machine_id}`;
+      const employeeKey = `${candidate.employee_id}`;
+      const pairKey = `${candidate.machine_id}-${candidate.employee_id}`;
+      
+      // Count assignments in this session
+      const machineAssignments = sessionWorkload.machines[machineKey] || 0;
+      const employeeAssignments = sessionWorkload.employees[employeeKey] || 0;
+      const pairAssignments = sessionWorkload.pairs[pairKey] || 0;
+      
+      // Calculate penalty (higher penalty = less preferred)
+      const sessionPenalty = (machineAssignments * 10) + (employeeAssignments * 10) + (pairAssignments * 20);
+      
+      // Add penalty to current workload or priority score
+      if (candidate.current_workload !== undefined) {
+        candidate.current_workload = parseInt(candidate.current_workload) + sessionPenalty;
+      }
+      if (candidate.priority_score !== undefined) {
+        candidate.priority_score = parseFloat(candidate.priority_score) + sessionPenalty;
+      }
+      
+      if (sessionPenalty > 0) {
+        console.log(`   Session penalty for ${candidate.machine_name} + ${candidate.employee_name}: +${sessionPenalty} (M:${machineAssignments}, E:${employeeAssignments}, P:${pairAssignments})`);
+      }
+    });
+    
+    // Re-sort candidates after applying penalties
+    if (candidates.length > 0 && candidates[0].priority_score !== undefined) {
+      candidates.sort((a, b) => a.priority_score - b.priority_score);
+    } else if (candidates.length > 0 && candidates[0].current_workload !== undefined) {
+      candidates.sort((a, b) => {
+        // Sort by preference rank first, then workload
+        if (a.preference_rank !== b.preference_rank) {
+          return a.preference_rank - b.preference_rank;
+        }
+        return a.current_workload - b.current_workload;
+      });
+    }
   }
 
   /**
    * Schedule a single job using backward scheduling (or forward if force_start_date provided)
    */
-  async scheduleJob(jobId, forceReschedule = false, forceStartDate = null, isPartial = false, startFromSequence = null) {
+  async scheduleJob(jobId, forceReschedule = false, forceStartDate = null, isPartial = false, startFromSequence = null, sessionWorkload = null) {
     console.log(`Starting to schedule job ${jobId}, forceReschedule: ${forceReschedule}`);
     const client = await this.pool.connect();
     
+    // Initialize session workload tracking if not provided
+    if (!sessionWorkload) {
+      sessionWorkload = {
+        machines: {},
+        employees: {},
+        pairs: {}
+      };
+    }
+    
     try {
       await client.query('BEGIN');
+      
+      // Check if job can be scheduled (respects dependencies)
+      let dependencyStartTime = null;
+      if (!forceReschedule) {
+        const depCheck = await client.query('SELECT * FROM can_job_be_scheduled($1)', [jobId]);
+        if (!depCheck.rows[0]?.can_schedule) {
+          const blockingJobs = depCheck.rows[0]?.blocking_job_numbers || [];
+          throw new Error(`Cannot schedule job - waiting for dependencies: ${blockingJobs.join(', ')}`);
+        }
+        
+        // If there are dependencies but they're scheduled, get earliest start time
+        if (depCheck.rows[0]?.blocking_jobs && depCheck.rows[0].blocking_jobs.length > 0) {
+          const earliestStartResult = await client.query(
+            'SELECT get_earliest_start_for_dependent_job($1) as earliest_start',
+            [jobId]
+          );
+          dependencyStartTime = earliestStartResult.rows[0].earliest_start;
+          if (dependencyStartTime) {
+            console.log(`Job ${jobId} has dependency constraint - must start after: ${dependencyStartTime}`);
+            // Override forceStartDate with dependency constraint if needed
+            if (!forceStartDate || new Date(forceStartDate) < new Date(dependencyStartTime)) {
+              forceStartDate = dependencyStartTime;
+              console.log(`Setting start date to dependency constraint: ${forceStartDate}`);
+            }
+          }
+        }
+      }
       
       // Get job details with routings
       const jobQuery = `
@@ -649,6 +780,21 @@ class SchedulingService {
       
       const scheduledOperations = [];
       
+      // Check for existing scheduled operations to prevent duplication
+      const existingSchedulesQuery = `
+        SELECT DISTINCT jr.id, jr.operation_number, jr.sequence_order
+        FROM schedule_slots ss
+        JOIN job_routings jr ON ss.job_routing_id = jr.id
+        WHERE ss.job_id = $1 AND ss.status IN ('scheduled', 'in_progress')
+      `;
+      const existingSchedules = await client.query(existingSchedulesQuery, [jobId]);
+      const scheduledOperationIds = new Set(existingSchedules.rows.map(row => row.id));
+      
+      if (existingSchedules.rows.length > 0 && !forceReschedule) {
+        console.log(`🔍 Found ${existingSchedules.rows.length} already scheduled operations for job ${jobId}:`, 
+          existingSchedules.rows.map(op => `Op ${op.operation_number} (seq ${op.sequence_order})`).join(', '));
+      }
+
       // Schedule each operation in sequence ORDER
       // For partial reschedules, start from the specified sequence
       const startIndex = isPartial && startFromSequence ? 
@@ -659,6 +805,34 @@ class SchedulingService {
         
         // Skip if this is a partial reschedule and we haven't reached the target sequence yet
         if (isPartial && startFromSequence && operation.sequence_order < startFromSequence) {
+          continue;
+        }
+        
+        // Skip operations that are already scheduled (unless forcing reschedule)
+        if (!forceReschedule && scheduledOperationIds.has(operation.id)) {
+          console.log(`⏭️  Skipping operation ${operation.operation_number} - already scheduled`);
+          
+          // Still add to scheduledOperations array for proper sequencing of subsequent operations
+          const existingSlots = await client.query(`
+            SELECT * FROM schedule_slots 
+            WHERE job_routing_id = $1 AND status IN ('scheduled', 'in_progress')
+            ORDER BY start_datetime
+          `, [operation.id]);
+          
+          scheduledOperations.push({
+            ...operation,
+            scheduled: true,
+            schedule_slots: existingSlots.rows,
+            skipped_existing: true
+          });
+          
+          // Update currentStartDate based on existing operation's end time
+          if (existingSlots.rows.length > 0) {
+            const lastSlot = existingSlots.rows[existingSlots.rows.length - 1];
+            const existingEndTime = new Date(lastSlot.end_datetime);
+            currentStartDate = new Date(existingEndTime.getTime() + 15 * 60 * 1000); // Add 15 minutes buffer
+            console.log(`Next operation will start after existing operation: ${currentStartDate.toISOString()}`);
+          }
           continue;
         }
         
@@ -697,15 +871,18 @@ class SchedulingService {
             const lastSlot = previousOperation.schedule_slots[previousOperation.schedule_slots.length - 1];
             const previousEndTime = new Date(lastSlot.end_datetime);
             
-            // Check if previous operation was SAW or waterjet (requires 24hr lag time)
+            // Check if previous operation was SAW or waterjet (requires next-day lag time)
             const previousOpName = previousOperation.operation_name?.toLowerCase() || '';
             const isSawOrWaterjet = previousOpName.includes('saw') || previousOpName.includes('waterjet') || previousOpName.includes('wj');
             
             let minimumStartTime;
             if (isSawOrWaterjet) {
-              // 24-hour lag time for SAW/waterjet operations
-              minimumStartTime = new Date(previousEndTime.getTime() + 24 * 60 * 60 * 1000); // 24 hours
-              console.log(`🔧 SAW/Waterjet operation detected: ${previousOperation.operation_name}. Adding 24-hour lag time.`);
+              // Next calendar day for SAW/waterjet operations
+              const nextDay = new Date(previousEndTime);
+              nextDay.setDate(nextDay.getDate() + 1);
+              nextDay.setHours(0, 0, 0, 0); // Start of next calendar day
+              minimumStartTime = nextDay;
+              console.log(`🔧 SAW/Waterjet operation detected: ${previousOperation.operation_name}. Next operation can start on ${nextDay.toDateString()}.`);
             } else {
               // Standard 15-minute buffer for other operations
               minimumStartTime = new Date(previousEndTime.getTime() + 15 * 60 * 1000); // 15 minutes
@@ -714,8 +891,8 @@ class SchedulingService {
             // Ensure current operation starts AFTER the minimum required time
             if (currentStartDate < minimumStartTime) {
               currentStartDate = minimumStartTime;
-              const lagHours = isSawOrWaterjet ? 24 : 0.25;
-              console.log(`⏰ Operation ${operation.operation_number} delayed to ${currentStartDate.toISOString()} to wait ${lagHours} hours after operation ${previousOperation.operation_number}`);
+              const lagDescription = isSawOrWaterjet ? 'next calendar day' : '15 minutes';
+              console.log(`⏰ Operation ${operation.operation_number} delayed to ${currentStartDate.toISOString()} to wait ${lagDescription} after operation ${previousOperation.operation_number}`);
             }
           }
         }
@@ -732,7 +909,7 @@ class SchedulingService {
         }
         
         // Find best machine-operator pair
-        const candidates = await this.findBestMachineOperatorPair(operation, currentStartDate);
+        const candidates = await this.findBestMachineOperatorPair(operation, currentStartDate, sessionWorkload);
         
         if (candidates.length === 0) {
           throw new Error(`No suitable machine-operator pair found for operation ${operation.operation_number}`);
@@ -835,6 +1012,17 @@ class SchedulingService {
               total_chunks: availableSlots.length
             });
             
+            // Update session workload tracking
+            const machineKey = `${candidate.machine_id}`;
+            const employeeKey = `${candidate.employee_id}`;
+            const pairKey = `${candidate.machine_id}-${candidate.employee_id}`;
+            
+            sessionWorkload.machines[machineKey] = (sessionWorkload.machines[machineKey] || 0) + 1;
+            sessionWorkload.employees[employeeKey] = (sessionWorkload.employees[employeeKey] || 0) + 1;
+            sessionWorkload.pairs[pairKey] = (sessionWorkload.pairs[pairKey] || 0) + 1;
+            
+            console.log(`📊 Session workload updated: Machine ${candidate.machine_name}(${sessionWorkload.machines[machineKey]}), Employee ${candidate.employee_name}(${sessionWorkload.employees[employeeKey]}), Pair(${sessionWorkload.pairs[pairKey]})`);
+            
             // Update current start date for next operation (use last chunk end time)
             // For sequence-dependent operations, next operation must start AFTER this one ends
             const finalEndTime = lastEndTime || new Date(availableSlots[0].end_datetime);
@@ -907,18 +1095,45 @@ class SchedulingService {
     const jobsResult = await this.pool.query(jobsQuery);
     const results = [];
     
+    // Initialize session workload tracking for distributed scheduling
+    const sessionWorkload = {
+      machines: {},
+      employees: {},
+      pairs: {}
+    };
+    
+    console.log(`🚀 Auto-scheduling ${jobsResult.rows.length} jobs with workload distribution...`);
+    
     for (const job of jobsResult.rows) {
       try {
-        const result = await this.scheduleJob(job.id);
+        const result = await this.scheduleJob(job.id, false, null, false, null, sessionWorkload);
         results.push({ job_number: job.job_number, ...result });
+        
+        // Log session progress
+        const totalAssignments = Object.values(sessionWorkload.pairs).reduce((sum, count) => sum + count, 0);
+        console.log(`📈 Job ${job.job_number} scheduled. Total operations assigned in session: ${totalAssignments}`);
+        
       } catch (error) {
         results.push({
           job_number: job.job_number,
           success: false,
           error: error.message
         });
+        console.error(`❌ Failed to schedule job ${job.job_number}: ${error.message}`);
       }
     }
+    
+    // Log final session workload distribution
+    console.log(`\n📊 Final session workload distribution:`);
+    console.log(`   Machine assignments:`, sessionWorkload.machines);
+    console.log(`   Employee assignments:`, sessionWorkload.employees);
+    console.log(`   Top 5 machine-operator pairs:`, 
+      Object.entries(sessionWorkload.pairs)
+        .sort(([,a], [,b]) => b - a)
+        .slice(0, 5)
+        .map(([pair, count]) => `${pair}(${count})`)
+        .join(', ')
+    );
     
     return results;
   }

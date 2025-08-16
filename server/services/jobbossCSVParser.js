@@ -48,7 +48,7 @@ class JobBossCSVParser {
         .on('data', (row) => {
           // Clean and validate the row
           const cleanedRow = this.cleanRow(row);
-          if (cleanedRow.job_number && cleanedRow.sequence) {
+          if (cleanedRow.job_number && cleanedRow.sequence >= 0) {
             rawData.push(cleanedRow);
           }
         })
@@ -134,8 +134,8 @@ class JobBossCSVParser {
     // Use first routing line for job-level data (they should all be the same)
     const firstLine = routingLines[0];
     
-    // Determine job type and assembly relationships
-    const { jobType, parentJobNumber, assemblySequence } = this.analyzeJobNumber(jobNumber);
+    // Determine job type and relationships
+    const { jobType, parentJobNumber, assemblySequence, isStockJob, stockNumber } = this.analyzeJobNumber(jobNumber);
     
     // Create job object
     const job = {
@@ -144,14 +144,15 @@ class JobBossCSVParser {
       part_name: firstLine.part_description,
       part_number: jobNumber, // Using job number as part number
       quantity: firstLine.est_required_qty,
-      priority: this.calculatePriority(firstLine),
+      priority: this.calculatePriority(firstLine, isStockJob),
       estimated_hours: routingLines.reduce((sum, line) => sum + line.est_total_hours, 0),
       due_date: firstLine.promised_date,
       promised_date: firstLine.promised_date,
+      order_date: firstLine.order_date, // For expedite calculation
       start_date: firstLine.order_date,
       status: this.mapJobStatus(firstLine.status),
       material: firstLine.material,
-      special_instructions: '',
+      special_instructions: isStockJob ? 'Stock Job - Lower Priority' : '',
       job_boss_data: firstLine,
       
       // Assembly fields
@@ -165,6 +166,10 @@ class JobBossCSVParser {
       material_lead_days: firstLine.material_lead_days,
       material_due_date: firstLine.material_due_date,
       material_req: firstLine.material_req,
+      
+      // Stock job fields
+      is_stock_job: isStockJob || false,
+      stock_number: stockNumber || null,
       
       // Store for assembly grouping
       _parent_job_number: parentJobNumber
@@ -182,8 +187,15 @@ class JobBossCSVParser {
    * Process a single routing line
    */
   processRoutingLine(jobNumber, line) {
-    // Determine if this is outsourced (vendor in both columns E and G)
-    const isOutsourced = line.amt_workcenter_vendor === line.vendor && line.vendor !== '';
+    // Enhanced outsourcing detection
+    const isOutsourced = this.detectOutsourcing(line);
+    
+    // Track if job has outsourcing for priority calculation
+    if (isOutsourced && this.jobs.has(jobNumber)) {
+      const job = this.jobs.get(jobNumber);
+      job.has_outsourcing = true;
+      job.outsourcing_lead_days = Math.max(job.outsourcing_lead_days || 0, line.lead_days || 0);
+    }
     
     // Map to machine or machine group
     const { machineId, machineGroupId, isExternal } = this.mapWorkCenter(line.amt_workcenter_vendor, isOutsourced);
@@ -217,16 +229,29 @@ class JobBossCSVParser {
   }
 
   /**
-   * Analyze job number for assembly relationships
+   * Analyze job number for job type and relationships
    */
   analyzeJobNumber(jobNumber) {
+    // Check if this is a stock job (format: S12345)
+    const stockMatch = jobNumber.match(/^S(\d+)$/);
+    if (stockMatch) {
+      return {
+        jobType: 'stock',
+        parentJobNumber: null,
+        assemblySequence: null,
+        isStockJob: true,
+        stockNumber: stockMatch[1]
+      };
+    }
+    
     // Check if this is a component job (format: XXXXX-Y)
     const componentMatch = jobNumber.match(/^(\d+)-(\d+)$/);
     if (componentMatch) {
       return {
         jobType: 'assembly_component',
         parentJobNumber: componentMatch[1],
-        assemblySequence: parseInt(componentMatch[2])
+        assemblySequence: parseInt(componentMatch[2]),
+        isStockJob: false
       };
     }
     
@@ -235,7 +260,8 @@ class JobBossCSVParser {
     return {
       jobType: 'standard',
       parentJobNumber: null,
-      assemblySequence: null
+      assemblySequence: null,
+      isStockJob: false
     };
   }
 
@@ -278,6 +304,32 @@ class JobBossCSVParser {
   }
 
   /**
+   * Detect if an operation is outsourced based on multiple criteria
+   */
+  detectOutsourcing(line) {
+    // Method 1: Vendor in both workcenter and vendor columns
+    const vendorInBoth = line.amt_workcenter_vendor === line.vendor && line.vendor !== '';
+    
+    // Method 2: Check if workcenter looks like a vendor name (contains common vendor indicators)
+    const vendorKeywords = ['LLC', 'INC', 'CORP', 'CO', '&', 'MACHINE', 'SHOP', 'MFG', 'MANUFACTURING'];
+    const workenterLooksLikeVendor = vendorKeywords.some(keyword => 
+      line.amt_workcenter_vendor.toUpperCase().includes(keyword)
+    );
+    
+    // Method 3: Check if there's a lead time specified (usually indicates outsourcing)
+    const hasLeadTime = line.lead_days && parseInt(line.lead_days) > 0;
+    
+    // Method 4: Check for common outsourced operation names
+    const outsourcedOps = ['OUTSOURCE', 'OUTSIDE', 'VENDOR', 'SUBCONTRACT', 'EXTERNAL'];
+    const operationIsOutsourced = outsourcedOps.some(op => 
+      line.amt_workcenter_vendor.toUpperCase().includes(op)
+    );
+    
+    return vendorInBoth || workenterLooksLikeVendor || operationIsOutsourced || 
+           (hasLeadTime && line.vendor !== '');
+  }
+
+  /**
    * Map workcenter to machine or machine group
    */
   mapWorkCenter(workcenter, isOutsourced) {
@@ -293,18 +345,25 @@ class JobBossCSVParser {
   /**
    * Calculate job priority based on due date and status
    */
-  calculatePriority(line) {
-    if (!line.promised_date) return 5;
+  calculatePriority(line, isStockJob = false) {
+    // Stock jobs get lower priority (higher numbers = lower priority)
+    const stockJobPenalty = isStockJob ? 2 : 0;
+    
+    if (!line.promised_date) return 5 + stockJobPenalty;
     
     const today = new Date();
     const dueDate = new Date(line.promised_date);
     const daysUntilDue = Math.ceil((dueDate - today) / (1000 * 60 * 60 * 24));
     
-    if (daysUntilDue < 0) return 1; // Overdue - highest priority
-    if (daysUntilDue <= 7) return 2; // Due within a week
-    if (daysUntilDue <= 14) return 3; // Due within two weeks
-    if (daysUntilDue <= 30) return 4; // Due within a month
-    return 5; // Normal priority
+    let basePriority;
+    if (daysUntilDue < 0) basePriority = 1; // Overdue - highest priority
+    else if (daysUntilDue <= 7) basePriority = 2; // Due within a week
+    else if (daysUntilDue <= 14) basePriority = 3; // Due within two weeks
+    else if (daysUntilDue <= 30) basePriority = 4; // Due within a month
+    else basePriority = 5; // Normal priority
+    
+    // Apply stock job penalty, but cap at priority 10
+    return Math.min(basePriority + stockJobPenalty, 10);
   }
 
   /**
