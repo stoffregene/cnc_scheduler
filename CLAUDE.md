@@ -249,6 +249,16 @@ node server/fix-working-hours-function.js
 13. ✅ **Job Detail Modals Enhancement** - Added comprehensive scheduling information display to all job modals
 14. ✅ **Calendar Navigation Links** - Added clickable start times that navigate directly to schedule view
 15. ✅ **Modal UI Cleanup** - Removed redundant sequence fields, simplified operation display
+16. ✅ **Pick Order Classification** - Implemented logic to identify pick orders (pick_qty = make_qty)
+17. ✅ **Manufacturing vs Pick Order Separation** - Pick orders excluded from manufacturing schedule
+18. ✅ **CSV Parser V2 Enhancement** - Added pick order detection to JobBossCSVParserV2
+
+### Pick Order System ✅ COMPLETED:
+1. **Classification Logic**: Jobs where pick_qty = make_qty are identified as pick orders
+2. **Manufacturing Exclusion**: Pick orders don't appear in manufacturing schedule as no production required
+3. **Separate Tracking**: Pick orders tracked separately for fulfillment/shipping purposes
+4. **Enhanced Import Process**: Import script separates 292 manufacturing jobs from 1 pick order
+5. **Visual Identification**: Pick orders marked with "Pick Order - No Manufacturing Required" in special instructions
 
 ### Outstanding Issues to Fix:
 - **Partial Reschedule Bug**: When rescheduling later operations (HMC, INSPECT), the system says "Job already scheduled" because SAW operation still exists. Need to improve the scheduling service to handle partial reschedules properly.

@@ -34,6 +34,7 @@ import {
   Delete as DeleteIcon,
   Visibility as VisibilityIcon,
   Lock as LockIcon,
+  Tune as OptimizeIcon,
 } from '@mui/icons-material';
 import { format, parseISO } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -45,9 +46,11 @@ const Scheduling = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [scheduling, setScheduling] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
   const [jobs, setJobs] = useState([]);
   const [machineWorkload, setMachineWorkload] = useState([]);
   const [schedulingResults, setSchedulingResults] = useState(null);
+  const [optimizeResults, setOptimizeResults] = useState(null);
   const [selectedJob, setSelectedJob] = useState(null);
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(null);
@@ -95,6 +98,86 @@ const Scheduling = () => {
       toast.error('Auto-scheduling failed');
     } finally {
       setScheduling(false);
+    }
+  };
+
+  const handleOptimizeAll = async () => {
+    if (!window.confirm('This will unschedule all jobs and re-optimize the entire schedule using priority-based scheduling and displacement. Continue?')) {
+      return;
+    }
+
+    try {
+      setOptimizing(true);
+      setOptimizeResults(null);
+      
+      // Step 1: Unschedule all jobs
+      toast.loading('Step 1/3: Unscheduling all jobs...', { id: 'optimize' });
+      await apiService.delete('/api/scheduling/unschedule-all');
+      
+      // Step 2: Get all jobs and schedule them in priority order using displacement
+      toast.loading('Step 2/3: Analyzing job priorities...', { id: 'optimize' });
+      const jobsResponse = await apiService.get('/api/jobs');
+      const allJobs = jobsResponse.data.filter(job => job.status === 'pending');
+      
+      // Sort by priority score (highest first)
+      const sortedJobs = allJobs.sort((a, b) => parseFloat(b.priority_score) - parseFloat(a.priority_score));
+      
+      toast.loading('Step 3/3: Optimizing schedule with displacement...', { id: 'optimize' });
+      
+      // Step 3: Schedule jobs in priority order using displacement
+      const results = {
+        scheduled: 0,
+        failed: 0,
+        displaced: 0,
+        optimized: 0,
+        details: []
+      };
+      
+      for (const job of sortedJobs) {
+        try {
+          const response = await apiService.post(`/api/displacement/schedule-with-displacement/${job.id}`);
+          
+          if (response.data.success) {
+            results.scheduled++;
+            if (response.data.displacementUsed) {
+              results.displaced++;
+              results.optimized++;
+            }
+            results.details.push({
+              jobNumber: job.job_number,
+              success: true,
+              displaced: response.data.displacementUsed || false,
+              message: response.data.message
+            });
+          } else {
+            results.failed++;
+            results.details.push({
+              jobNumber: job.job_number,
+              success: false,
+              message: response.data.message || 'Failed to schedule'
+            });
+          }
+        } catch (jobError) {
+          results.failed++;
+          results.details.push({
+            jobNumber: job.job_number,
+            success: false,
+            message: jobError.response?.data?.error || 'Scheduling error'
+          });
+        }
+      }
+      
+      setOptimizeResults(results);
+      
+      toast.success(`Optimization complete! Scheduled: ${results.scheduled}, Failed: ${results.failed}, Optimized: ${results.optimized}`, { id: 'optimize' });
+      
+      fetchData(); // Refresh data
+      
+    } catch (error) {
+      console.error('Error optimizing schedule:', error);
+      toast.error('Schedule optimization failed', { id: 'optimize' });
+    } finally {
+      setOptimizing(false);
     }
   };
 
@@ -228,15 +311,33 @@ const Scheduling = () => {
                 {pendingJobs.length} jobs pending • {scheduledJobs.length} jobs scheduled
               </Typography>
             </Box>
-            <Button
-              variant="contained"
-              startIcon={scheduling ? <CircularProgress size={20} /> : <AutoModeIcon />}
-              onClick={handleAutoSchedule}
-              disabled={scheduling || pendingJobs.length === 0}
-              size="large"
-            >
-              {scheduling ? 'Scheduling...' : 'Auto-Schedule All'}
-            </Button>
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <Button
+                variant="contained"
+                startIcon={scheduling ? <CircularProgress size={20} /> : <AutoModeIcon />}
+                onClick={handleAutoSchedule}
+                disabled={scheduling || optimizing || pendingJobs.length === 0}
+                size="large"
+              >
+                {scheduling ? 'Scheduling...' : 'Auto-Schedule All'}
+              </Button>
+              <Button
+                variant="contained"
+                color="secondary"
+                startIcon={optimizing ? <CircularProgress size={20} /> : <OptimizeIcon />}
+                onClick={handleOptimizeAll}
+                disabled={scheduling || optimizing || jobs.length === 0}
+                size="large"
+                sx={{
+                  bgcolor: '#f59e0b',
+                  color: '#ffffff',
+                  '&:hover': { bgcolor: '#d97706' },
+                  '&:disabled': { bgcolor: '#374151' }
+                }}
+              >
+                {optimizing ? 'Optimizing...' : 'Optimize All'}
+              </Button>
+            </Box>
           </Box>
         </CardContent>
       </Card>
@@ -280,6 +381,74 @@ const Scheduling = () => {
                         label={result.success ? 'Success' : 'Failed'}
                         color={result.success ? 'success' : 'error'}
                       />
+                    </ListItem>
+                  ))}
+                </List>
+              </AccordionDetails>
+            </Accordion>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Optimize Results */}
+      {optimizeResults && (
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Schedule Optimization Results
+            </Typography>
+            <Box display="flex" gap={2} mb={2}>
+              <Chip 
+                label={`${optimizeResults.scheduled} Scheduled`} 
+                color="success" 
+                variant="outlined" 
+              />
+              <Chip 
+                label={`${optimizeResults.failed} Failed`} 
+                color="error" 
+                variant="outlined" 
+              />
+              <Chip 
+                label={`${optimizeResults.optimized} Optimized`} 
+                sx={{ bgcolor: '#f59e0b', color: '#ffffff' }}
+                variant="filled" 
+              />
+              <Chip 
+                label={`${optimizeResults.displaced} Displaced`} 
+                sx={{ bgcolor: '#8b5cf6', color: '#ffffff' }}
+                variant="filled" 
+              />
+            </Box>
+            <Accordion>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Typography>View Optimization Details</Typography>
+              </AccordionSummary>
+              <AccordionDetails>
+                <List dense>
+                  {optimizeResults.details.map((result, index) => (
+                    <ListItem key={index}>
+                      <ListItemText
+                        primary={result.jobNumber}
+                        secondary={
+                          result.success ? 
+                            `${result.message} ${result.displaced ? '(Used displacement)' : ''}` : 
+                            result.message
+                        }
+                      />
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        {result.displaced && (
+                          <Chip
+                            size="small"
+                            label="Displaced"
+                            sx={{ bgcolor: '#8b5cf6', color: '#ffffff' }}
+                          />
+                        )}
+                        <Chip
+                          size="small"
+                          label={result.success ? 'Success' : 'Failed'}
+                          color={result.success ? 'success' : 'error'}
+                        />
+                      </Box>
                     </ListItem>
                   ))}
                 </List>
@@ -566,6 +735,9 @@ const Scheduling = () => {
                               <Box sx={{ mt: 0.5 }}>
                                 <Typography variant="caption" display="block">
                                   <strong>Estimated Hours:</strong> {routing.estimated_hours || 'Not set'}
+                                </Typography>
+                                <Typography variant="caption" display="block">
+                                  <strong>Status:</strong> {routing.routing_status === 'C' ? 'Completed' : routing.routing_status || 'Not set'}
                                 </Typography>
                                 {routing.schedule_slot_id && (
                                   <>

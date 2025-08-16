@@ -7,18 +7,15 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { Toaster } from 'react-hot-toast';
 import './index.css';
+import './styles/globalStyles.css';
 
 import App from './App';
-import { ThemeProvider as AppThemeProvider, useTheme } from './contexts/ThemeContext';
-import { createAppTheme } from './themes/theme';
+import duraluxTheme from './theme/duraluxTheme';
 
-// Theme wrapper component
+// Theme wrapper component with new Duralux theme
 const ThemedApp = () => {
-  const { darkMode } = useTheme();
-  const theme = createAppTheme(darkMode);
-  
   return (
-    <ThemeProvider theme={theme}>
+    <ThemeProvider theme={duraluxTheme}>
       <CssBaseline />
       <App />
       <Toaster
@@ -26,9 +23,25 @@ const ThemedApp = () => {
         toastOptions={{
           duration: 4000,
           style: {
-            background: darkMode ? '#2a2a2a' : '#363636',
-            color: '#fff',
-            border: darkMode ? '1px solid #2d3748' : 'none',
+            background: 'linear-gradient(135deg, #131823 0%, #1a2030 100%)',
+            color: '#e4e6eb',
+            border: '1px solid rgba(0, 212, 255, 0.2)',
+            borderRadius: '8px',
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+          },
+          success: {
+            style: {
+              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              color: '#10b981',
+            },
+          },
+          error: {
+            style: {
+              background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              color: '#ef4444',
+            },
           },
         }}
       />
@@ -40,11 +53,9 @@ const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
     <BrowserRouter>
-      <AppThemeProvider>
-        <LocalizationProvider dateAdapter={AdapterDateFns}>
-          <ThemedApp />
-        </LocalizationProvider>
-      </AppThemeProvider>
+      <LocalizationProvider dateAdapter={AdapterDateFns}>
+        <ThemedApp />
+      </LocalizationProvider>
     </BrowserRouter>
   </React.StrictMode>
 );

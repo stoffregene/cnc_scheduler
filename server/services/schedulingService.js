@@ -349,16 +349,37 @@ class SchedulingService {
       
       console.log(`Chunk ${chunks.length} scheduled: ${chunkSize} minutes (${(chunkSize/60).toFixed(1)}h) from ${chunkStartTime.toISOString()} to ${chunkEndTime.toISOString()}. Remaining: ${remainingMinutes} minutes (${(remainingMinutes/60).toFixed(1)}h)`);
       
-      // Move to next working day for this employee (ensure we start fresh the next day)
-      currentDate = new Date(chunkEndTime);
-      currentDate.setDate(currentDate.getDate() + 1);
-      currentDate.setHours(0, 0, 0, 0); // Reset to start of next day
-      let attempts = 0;
-      while (attempts < 7) { // Prevent infinite loop
-        const nextDayHours = await this.getOperatorWorkingHours(employeeId, currentDate);
-        if (nextDayHours.is_working_day) break;
+      // IMPROVED: Check if operator has remaining time on SAME DAY before moving to next day
+      const currentShiftEndHour = Math.floor(parseFloat(workingHours.end_hour));
+      const currentShiftEndMinute = Math.round((parseFloat(workingHours.end_hour) % 1) * 60);
+      const shiftEndTime = new Date(chunkEndTime);
+      shiftEndTime.setHours(currentShiftEndHour, currentShiftEndMinute, 0, 0);
+      
+      const remainingTimeToday = Math.max(0, (shiftEndTime - chunkEndTime) / (1000 * 60));
+      const minWorkableTime = 30; // Minimum 30 minutes to be worth scheduling
+      
+      console.log(`⏰ Shift ends at ${shiftEndTime.toLocaleTimeString()}, current chunk ends at ${chunkEndTime.toLocaleTimeString()}`);
+      console.log(`📊 Remaining time today: ${(remainingTimeToday/60).toFixed(1)} hours`);
+      
+      if (remainingMinutes > 0 && remainingTimeToday >= minWorkableTime) {
+        // Still have work to do AND operator has time today - continue on same day
+        console.log(`✅ Operator has ${(remainingTimeToday/60).toFixed(1)}h remaining today - checking for more work on same day`);
+        currentDate = new Date(chunkEndTime);
+        // Add small buffer between chunks (15 minutes)
+        currentDate.setTime(currentDate.getTime() + 15 * 60 * 1000);
+      } else {
+        // Move to next working day
+        console.log(`📅 Moving to next day - either no more work (${remainingMinutes}min) or insufficient time today (${(remainingTimeToday/60).toFixed(1)}h)`);
+        currentDate = new Date(chunkEndTime);
         currentDate.setDate(currentDate.getDate() + 1);
-        attempts++;
+        currentDate.setHours(0, 0, 0, 0); // Reset to start of next day
+        let attempts = 0;
+        while (attempts < 7) { // Prevent infinite loop
+          const nextDayHours = await this.getOperatorWorkingHours(employeeId, currentDate);
+          if (nextDayHours.is_working_day) break;
+          currentDate.setDate(currentDate.getDate() + 1);
+          attempts++;
+        }
       }
       
       // Safety check to prevent infinite loop
@@ -898,7 +919,47 @@ class SchedulingService {
         }
         const durationMinutes = Math.ceil((operation.estimated_hours || 0) * 60);
         
-        // Skip operations with 0 duration (INSPECT, OUTSOURCE, etc.)
+        // Handle INSPECT operations specially
+        if (operation.operation_name && operation.operation_name.toUpperCase().includes('INSPECT')) {
+          console.log(`🔍 Processing INSPECT operation: ${operation.operation_name}`);
+          
+          // Force INSPECT operations to 0 duration and add to inspection queue
+          try {
+            await client.query(`
+              INSERT INTO inspection_queue (
+                job_id, job_number, routing_id, operation_number, operation_name,
+                customer_name, priority_score, entered_queue_at
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+              ON CONFLICT (job_id, routing_id) DO UPDATE SET
+                priority_score = EXCLUDED.priority_score,
+                entered_queue_at = NOW()
+            `, [
+              jobId, job.job_number, operation.id, operation.operation_number,
+              operation.operation_name, job.customer_name, priorityScore
+            ]);
+            
+            console.log(`✅ Added ${operation.operation_name} to inspection queue for job ${job.job_number}`);
+            
+            scheduledOperations.push({
+              ...operation,
+              scheduled: true,
+              reason: 'Added to inspection queue - 0 duration',
+              inspection_queue: true,
+              duration_minutes: 0
+            });
+            
+          } catch (error) {
+            console.error(`❌ Failed to add INSPECT operation to queue:`, error.message);
+            scheduledOperations.push({
+              ...operation,
+              scheduled: false,
+              reason: `Failed to add to inspection queue: ${error.message}`
+            });
+          }
+          continue;
+        }
+        
+        // Skip other operations with 0 duration (OUTSOURCE, etc.)
         if (durationMinutes === 0) {
           scheduledOperations.push({
             ...operation,
@@ -912,7 +973,20 @@ class SchedulingService {
         const candidates = await this.findBestMachineOperatorPair(operation, currentStartDate, sessionWorkload);
         
         if (candidates.length === 0) {
-          throw new Error(`No suitable machine-operator pair found for operation ${operation.operation_number}`);
+          // Enhanced debugging for null machine values
+          const debugInfo = [];
+          if (operation.machine_id) {
+            debugInfo.push(`Target Machine ID: ${operation.machine_id}`);
+          }
+          if (operation.machine_group_id) {
+            debugInfo.push(`Target Machine Group ID: ${operation.machine_group_id}`);
+          }
+          if (!operation.machine_id && !operation.machine_group_id) {
+            debugInfo.push('❌ NULL MACHINE ASSIGNMENT: Operation has no machine_id OR machine_group_id specified');
+          }
+          
+          const debugMessage = debugInfo.length > 0 ? ` (${debugInfo.join(', ')})` : '';
+          throw new Error(`No suitable machine-operator pair found for operation ${operation.operation_number} (${operation.operation_name})${debugMessage}`);
         }
         
         // Try to schedule with each candidate

@@ -410,8 +410,24 @@ const ScheduleDayZone = ({ dayIndex, children }) => {
 
 const ScheduleView = () => {
   const [loading, setLoading] = useState(true);
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState('week'); // day, week, month
+  
+  // Load saved schedule position from localStorage
+  const [currentDate, setCurrentDate] = useState(() => {
+    const saved = localStorage.getItem('scheduleViewDate');
+    if (saved) {
+      try {
+        return new Date(saved);
+      } catch (e) {
+        console.error('Failed to parse saved schedule date:', e);
+      }
+    }
+    return new Date();
+  });
+  
+  const [viewMode, setViewMode] = useState(() => {
+    return localStorage.getItem('scheduleViewMode') || 'week';
+  }); // day, week, month
+  
   const [scheduleSlots, setScheduleSlots] = useState([]);
   const [machines, setMachines] = useState([]);
   const [machineGroups, setMachineGroups] = useState([]);
@@ -589,11 +605,19 @@ const ScheduleView = () => {
 
   const navigateDate = (direction) => {
     const increment = viewMode === 'day' ? 1 : viewMode === 'week' ? 7 : 30;
-    setCurrentDate(prevDate => addDays(prevDate, direction === 'next' ? increment : -increment));
+    setCurrentDate(prevDate => {
+      const newDate = addDays(prevDate, direction === 'next' ? increment : -increment);
+      // Save to localStorage
+      localStorage.setItem('scheduleViewDate', newDate.toISOString());
+      return newDate;
+    });
   };
 
   const goToToday = () => {
-    setCurrentDate(new Date());
+    const today = new Date();
+    setCurrentDate(today);
+    // Save to localStorage
+    localStorage.setItem('scheduleViewDate', today.toISOString());
   };
 
   const handleSlotClick = (slot) => {
@@ -957,7 +981,12 @@ const ScheduleView = () => {
               <Select
                 value={viewMode}
                 label="View"
-                onChange={(e) => setViewMode(e.target.value)}
+                onChange={(e) => {
+                  const newMode = e.target.value;
+                  setViewMode(newMode);
+                  // Save to localStorage
+                  localStorage.setItem('scheduleViewMode', newMode);
+                }}
               >
                 <MenuItem value="day">
                   <Box display="flex" alignItems="center" gap={1}>

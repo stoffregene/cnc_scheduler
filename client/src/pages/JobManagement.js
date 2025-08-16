@@ -887,6 +887,9 @@ const JobManagement = () => {
                                 <Typography variant="caption" display="block" sx={{ color: '#9ca3af' }}>
                                   <strong>Estimated Hours:</strong> {routing.estimated_hours || 'Not set'}
                                 </Typography>
+                                <Typography variant="caption" display="block" sx={{ color: '#9ca3af' }}>
+                                  <strong>Status:</strong> {routing.routing_status === 'C' ? 'Completed' : routing.routing_status || 'Not set'}
+                                </Typography>
                                 {routing.schedule_slot_id && (
                                   <>
                                     <Typography variant="caption" display="block" sx={{ color: 'success.main' }}>

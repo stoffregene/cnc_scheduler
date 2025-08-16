@@ -4,6 +4,7 @@ const csv = require('csv-parser');
 const fs = require('fs');
 const { body, validationResult } = require('express-validator');
 const JobBossCSVParser = require('../services/jobbossCSVParser');
+const JobBossCSVParserV2 = require('../services/jobbossCSVParserV2');
 const PriorityService = require('../services/priorityService');
 const router = express.Router();
 
@@ -68,6 +69,19 @@ router.get('/', async (req, res) => {
       params.push(due_date);
     }
     
+    // Add condition to exclude jobs where all operations are completed (awaiting shipping)
+    const excludeCompleted = `
+      j.id NOT IN (
+        SELECT j2.id 
+        FROM jobs j2
+        LEFT JOIN job_routings jr2 ON j2.id = jr2.job_id
+        GROUP BY j2.id
+        HAVING COUNT(jr2.id) > 0 
+        AND COUNT(jr2.id) = COUNT(CASE WHEN jr2.routing_status = 'C' THEN 1 END)
+      )
+    `;
+    conditions.push(excludeCompleted);
+    
     if (conditions.length > 0) {
       query += ' WHERE ' + conditions.join(' AND ');
     }
@@ -79,6 +93,109 @@ router.get('/', async (req, res) => {
   } catch (error) {
     console.error('Error fetching jobs:', error);
     res.status(500).json({ error: 'Failed to fetch jobs' });
+  }
+});
+
+// Get jobs awaiting shipping (all operations completed but job still active) - MUST BE BEFORE /:id route
+router.get('/awaiting-shipping', async (req, res) => {
+  try {
+    const { pool } = req.app.locals;
+    
+    const result = await pool.query(`
+      WITH job_operation_status AS (
+        SELECT 
+          j.id as job_id,
+          j.job_number,
+          j.customer_name,
+          j.part_name,
+          j.part_number,
+          j.quantity,
+          j.material,
+          j.due_date,
+          j.promised_date,
+          j.priority_score,
+          j.status as job_status,
+          j.created_at,
+          j.updated_at,
+          -- Count total operations
+          COUNT(jr.id) as total_operations,
+          -- Count completed operations (routing_status 'C')
+          COUNT(CASE WHEN jr.routing_status = 'C' THEN 1 END) as completed_operations,
+          -- Get completion date of last operation
+          MAX(CASE WHEN jr.routing_status = 'C' THEN ss.end_datetime END) as last_operation_completed_at,
+          -- Check if all operations are completed
+          (COUNT(jr.id) = COUNT(CASE WHEN jr.routing_status = 'C' THEN 1 END)) as all_operations_completed,
+          -- Get all operation details for reference
+          json_agg(
+            json_build_object(
+              'id', jr.id,
+              'operation_number', jr.operation_number,
+              'operation_name', jr.operation_name,
+              'sequence_order', jr.sequence_order,
+              'status', jr.routing_status,
+              'completed_at', ss.end_datetime
+            ) ORDER BY jr.sequence_order
+          ) as operations
+        FROM jobs j
+        LEFT JOIN job_routings jr ON j.id = jr.job_id
+        LEFT JOIN schedule_slots ss ON jr.id = ss.job_routing_id
+        WHERE j.status IN ('active', 'scheduled', 'in_progress', 'pending')  -- Include pending jobs with completed operations
+        AND j.job_number !~ '-\\d+$'  -- Exclude subassemblies (job numbers ending with dash and number)
+        AND j.customer_name != 'STOCK'  -- Exclude stock jobs (internal inventory, not customer shipments)
+        GROUP BY j.id, j.job_number, j.customer_name, j.part_name, j.part_number, 
+                 j.quantity, j.material, j.due_date, j.promised_date, j.priority_score, 
+                 j.status, j.created_at, j.updated_at
+      )
+      SELECT 
+        *,
+        -- Calculate days since completion
+        CASE 
+          WHEN last_operation_completed_at IS NOT NULL 
+          THEN EXTRACT(DAY FROM (CURRENT_TIMESTAMP - last_operation_completed_at))
+          ELSE NULL
+        END as days_since_completion,
+        -- Urgency based on due date
+        CASE 
+          WHEN promised_date IS NULL THEN 'no_date'
+          WHEN promised_date < CURRENT_DATE THEN 'overdue'
+          WHEN promised_date = CURRENT_DATE THEN 'due_today'
+          WHEN promised_date <= CURRENT_DATE + INTERVAL '3 days' THEN 'urgent'
+          WHEN promised_date <= CURRENT_DATE + INTERVAL '7 days' THEN 'soon'
+          ELSE 'on_schedule'
+        END as urgency_status
+      FROM job_operation_status
+      WHERE all_operations_completed = true
+        AND total_operations > 0  -- Only jobs that actually have operations
+      ORDER BY 
+        CASE 
+          WHEN promised_date < CURRENT_DATE THEN 1
+          WHEN promised_date = CURRENT_DATE THEN 2
+          WHEN promised_date <= CURRENT_DATE + INTERVAL '3 days' THEN 3
+          ELSE 4
+        END,
+        last_operation_completed_at DESC,
+        promised_date ASC
+    `);
+    
+    // Calculate summary statistics
+    const totals = {
+      total_jobs: result.rows.length,
+      overdue: result.rows.filter(r => r.urgency_status === 'overdue').length,
+      due_today: result.rows.filter(r => r.urgency_status === 'due_today').length,
+      urgent: result.rows.filter(r => r.urgency_status === 'urgent').length,
+      soon: result.rows.filter(r => r.urgency_status === 'soon').length,
+      on_schedule: result.rows.filter(r => r.urgency_status === 'on_schedule').length,
+      no_date: result.rows.filter(r => r.urgency_status === 'no_date').length
+    };
+    
+    res.json({
+      jobs: result.rows,
+      totals: totals
+    });
+    
+  } catch (error) {
+    console.error('Error fetching awaiting shipping jobs:', error);
+    res.status(500).json({ error: 'Failed to fetch awaiting shipping jobs' });
   }
 });
 
@@ -481,8 +598,8 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
     
     console.log('Starting JobBoss CSV import...');
     
-    // Parse CSV using JobBoss parser
-    const parser = new JobBossCSVParser(pool);
+    // Parse CSV using JobBoss parser V2 (with pick order support)
+    const parser = new JobBossCSVParserV2(pool);
     const parsedData = await parser.parseCSV(req.file.path);
     
     console.log(`Parsed ${parsedData.jobs.length} jobs and ${parsedData.routings.length} routing lines`);
@@ -500,9 +617,29 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
       const assemblyRelationships = [];
       const vendorData = [];
       const priorityUpdates = [];
+      const pickOrders = [];
       
-      // Insert jobs first
-      for (const job of parsedData.jobs) {
+      // Separate pick orders from manufacturing jobs
+      const manufacturingJobs = parsedData.jobs.filter(job => !job.is_pick_order);
+      const pickOrderJobs = parsedData.jobs.filter(job => job.is_pick_order);
+      
+      console.log(`Found ${pickOrderJobs.length} pick orders (excluded from manufacturing schedule)`);
+      console.log(`Processing ${manufacturingJobs.length} manufacturing jobs`);
+      
+      // Store pick orders for tracking
+      pickOrderJobs.forEach(pickOrder => {
+        pickOrders.push({
+          job_number: pickOrder.job_number,
+          customer_name: pickOrder.customer_name,
+          part_name: pickOrder.part_name,
+          pick_qty: pickOrder.pick_qty,
+          make_qty: pickOrder.make_qty,
+          promised_date: pickOrder.promised_date
+        });
+      });
+      
+      // Insert manufacturing jobs only
+      for (const job of manufacturingJobs) {
         // Handle jobs that should be removed (CLOSED status)
         if (job.status === 'completed' && job.job_boss_data.status === 'CLOSED') {
           // Remove from schedule if exists
@@ -588,8 +725,13 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
         jobIdMap.set(job.job_number, job.id);
       });
       
-      // Insert job routings
-      for (const routing of parsedData.routings) {
+      // Insert job routings (only for manufacturing jobs, not pick orders)
+      const manufacturingJobNumbers = new Set(manufacturingJobs.map(j => j.job_number));
+      const manufacturingRoutings = parsedData.routings.filter(r => 
+        manufacturingJobNumbers.has(r.job_number)
+      );
+      
+      for (const routing of manufacturingRoutings) {
         const jobId = jobIdMap.get(routing.job_number);
         if (!jobId) continue;
         
@@ -682,8 +824,9 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
       fs.unlinkSync(req.file.path);
       
       const summary = {
-        message: `Successfully imported ${insertedJobs.length} jobs with ${insertedRoutings.length} routing operations`,
+        message: `Successfully imported ${insertedJobs.length} manufacturing jobs and identified ${pickOrders.length} pick orders with ${insertedRoutings.length} routing operations`,
         totalJobs: insertedJobs.length,
+        pickOrders: pickOrders.length,
         totalRoutings: insertedRoutings.length,
         assemblyGroups: parsedData.assemblyGroups.size,
         assemblyRelationships: assemblyRelationships.length,
@@ -691,7 +834,8 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
         priorityScoresCalculated: priorityUpdates.length,
         jobs: insertedJobs,
         routings: insertedRoutings,
-        priorityUpdates: priorityUpdates
+        priorityUpdates: priorityUpdates,
+        pickOrderDetails: pickOrders
       };
       
       if (assemblyRelationships.length > 0) {
@@ -783,7 +927,7 @@ router.get('/:id/routings', async (req, res) => {
     const result = await pool.query(`
       SELECT 
         jr.id, jr.operation_number, jr.operation_name, jr.machine_id,
-        jr.machine_group_id, jr.sequence_order, jr.estimated_hours, jr.notes,
+        jr.machine_group_id, jr.sequence_order, jr.estimated_hours, jr.notes, jr.routing_status,
         m.name as machine_name, m.model as machine_model,
         ss.id as schedule_slot_id, ss.start_datetime, ss.end_datetime, 
         ss.machine_id as scheduled_machine_id, ss.employee_id as scheduled_employee_id,

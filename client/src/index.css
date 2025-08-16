@@ -4,7 +4,7 @@ body {
 }
 
 body.dark-mode {
-  background-color: #0a0a0a;
+  background-color: #010101;
   color: #e2e8f0;
 }
 
@@ -37,25 +37,25 @@ body::-webkit-scrollbar {
 }
 
 body::-webkit-scrollbar-track {
-  background: #f7fafc;
+  background: #F8F9FA;
 }
 
 body::-webkit-scrollbar-thumb {
-  background: #cbd5e0;
+  background: #E5E5E5;
   border-radius: 4px;
 }
 
 body::-webkit-scrollbar-thumb:hover {
-  background: #a0aec0;
+  background: #999999;
 }
 
 /* Ensure proper contrast for focus states */
 *:focus {
-  outline: 2px solid #1a365d;
+  outline: 2px solid #E82A2A;
   outline-offset: 2px;
 }
 
 /* Dark mode focus states */
 body.dark-mode *:focus {
-  outline-color: #2d5a87;
+  outline-color: #FF5555;
 }

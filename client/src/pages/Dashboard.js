@@ -38,6 +38,17 @@ import {
   ChevronRight as ChevronRightIcon,
   Today as TodayIcon,
   Lock as LockIcon,
+  Carpenter as SawIcon,
+  Water as WaterjetIcon,
+  RotateRight as LatheIcon,
+  Settings as MillIcon,
+  Computer as VMCIcon,
+  Dashboard as HMCIcon,
+  Search as InspectIcon,
+  CleaningServices as DeburrIcon,
+  Gradient as GrindIcon,
+  Construction as DrillIcon,
+  Handyman as DefaultMachineIcon,
 } from '@mui/icons-material';
 import { format, parseISO, isPast, isToday, isTomorrow } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -46,6 +57,7 @@ import { useNavigate } from 'react-router-dom';
 import { apiService } from '../services/apiService';
 import Logo from '../components/Logo';
 import OutsourcingTile from '../components/OutsourcingTile';
+import AwaitingShippingTile from '../components/AwaitingShippingTile';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -57,8 +69,20 @@ const Dashboard = () => {
   const [jobDialogOpen, setJobDialogOpen] = useState(false);
   const [jobRoutings, setJobRoutings] = useState([]);
   const [shiftCapacity, setShiftCapacity] = useState(null);
-  const [capacityPeriod, setCapacityPeriod] = useState('day');
-  const [capacityDate, setCapacityDate] = useState(new Date());
+  const [capacityPeriod, setCapacityPeriod] = useState(() => {
+    return localStorage.getItem('dashboardCapacityPeriod') || 'day';
+  });
+  const [capacityDate, setCapacityDate] = useState(() => {
+    const saved = localStorage.getItem('dashboardCapacityDate');
+    if (saved) {
+      try {
+        return new Date(saved);
+      } catch (e) {
+        console.error('Failed to parse saved dashboard capacity date:', e);
+      }
+    }
+    return new Date();
+  });
 
   useEffect(() => {
     fetchDashboardData();
@@ -177,6 +201,7 @@ const Dashboard = () => {
 
   const handlePeriodChange = (newPeriod) => {
     setCapacityPeriod(newPeriod);
+    localStorage.setItem('dashboardCapacityPeriod', newPeriod);
   };
 
   const handleDateNavigation = (direction) => {
@@ -195,10 +220,13 @@ const Dashboard = () => {
     }
     
     setCapacityDate(newDate);
+    localStorage.setItem('dashboardCapacityDate', newDate.toISOString());
   };
 
   const handleTodayClick = () => {
-    setCapacityDate(new Date());
+    const today = new Date();
+    setCapacityDate(today);
+    localStorage.setItem('dashboardCapacityDate', today.toISOString());
   };
 
   const getDateRangeLabel = () => {
@@ -308,6 +336,80 @@ const Dashboard = () => {
     </Card>
   );
 
+  // Function to get machine type icon
+  const getMachineIcon = (machineName) => {
+    const name = machineName?.toUpperCase() || '';
+    
+    if (name.includes('SAW')) return <SawIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('WJ') || name.includes('WATERJET')) return <WaterjetIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('LATHE')) return <LatheIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('MILL')) return <MillIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('VMC')) return <VMCIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('HMC')) return <HMCIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('INSPECT')) return <InspectIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('DEBURR')) return <DeburrIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('GRIND')) return <GrindIcon sx={{ fontSize: '1.2rem' }} />;
+    if (name.includes('DRILL')) return <DrillIcon sx={{ fontSize: '1.2rem' }} />;
+    
+    return <DefaultMachineIcon sx={{ fontSize: '1.2rem' }} />;
+  };
+  
+  // Function to get machine type color
+  const getMachineColor = (machineName) => {
+    const name = machineName?.toUpperCase() || '';
+    
+    if (name.includes('SAW')) return '#f44336';
+    if (name.includes('WJ') || name.includes('WATERJET')) return '#2196f3';
+    if (name.includes('LATHE')) return '#ff9800';
+    if (name.includes('MILL')) return '#795548';
+    if (name.includes('VMC')) return '#9c27b0';
+    if (name.includes('HMC')) return '#673ab7';
+    if (name.includes('INSPECT')) return '#4caf50';
+    if (name.includes('DEBURR')) return '#607d8b';
+    if (name.includes('GRIND')) return '#009688';
+    if (name.includes('DRILL')) return '#3f51b5';
+    
+    return '#9e9e9e';
+  };
+  
+  // Sort machines with jobs at top, prioritize mills/lathes
+  const sortMachines = (machines) => {
+    return [...machines].sort((a, b) => {
+      // First priority: machines with current jobs vs without
+      const aHasJobs = a.schedules && a.schedules.length > 0;
+      const bHasJobs = b.schedules && b.schedules.length > 0;
+      
+      if (aHasJobs && !bHasJobs) return -1;
+      if (!aHasJobs && bHasJobs) return 1;
+      
+      // Second priority: machine type priority
+      const getMachinePriority = (name) => {
+        const upperName = name?.toUpperCase() || '';
+        if (upperName.includes('MILL')) return 1;
+        if (upperName.includes('LATHE')) return 2;
+        if (upperName.includes('VMC')) return 3;
+        if (upperName.includes('HMC')) return 4;
+        if (upperName.includes('SAW')) return 5;
+        if (upperName.includes('WJ') || upperName.includes('WATERJET')) return 6;
+        if (upperName.includes('GRIND')) return 7;
+        if (upperName.includes('DRILL')) return 8;
+        if (upperName.includes('DEBURR')) return 9;
+        if (upperName.includes('INSPECT')) return 10;
+        return 99;
+      };
+      
+      const aPriority = getMachinePriority(a.machine_name);
+      const bPriority = getMachinePriority(b.machine_name);
+      
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
+      }
+      
+      // Third priority: number of scheduled jobs
+      return (b.schedules?.length || 0) - (a.schedules?.length || 0);
+    });
+  };
+
   const MachineCard = ({ machine }) => {
     const currentTime = new Date();
     const currentDay = currentTime.getDay(); // 0=Sunday, 1=Monday, etc.
@@ -366,7 +468,9 @@ const Dashboard = () => {
         <CardContent>
           <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <BuildIcon sx={{ color: activityColor, fontSize: '1.2rem' }} />
+              <Box sx={{ color: getMachineColor(machine.machine_name) }}>
+                {getMachineIcon(machine.machine_name)}
+              </Box>
               <Typography variant="h6" component="div" sx={{ fontWeight: 600, color: '#e4e6eb' }}>
                 {machine.machine_name}
               </Typography>
@@ -841,11 +945,14 @@ const Dashboard = () => {
         </>
       )}
 
-      {/* Outsourcing Operations */}
+      {/* Outsourcing Operations & Shipping */}
       <Box sx={{ mt: 4, mb: 4 }}>
         <Grid container spacing={3}>
           <Grid item xs={12} md={6}>
             <OutsourcingTile />
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <AwaitingShippingTile />
           </Grid>
         </Grid>
       </Box>
@@ -855,7 +962,7 @@ const Dashboard = () => {
         Machines
       </Typography>
       <Grid container spacing={3} mb={4}>
-        {machineView.map((machine) => (
+        {sortMachines(machineView).map((machine) => (
           <Grid item xs={12} sm={6} md={4} lg={3} key={machine.machine_id}>
             <MachineCard machine={machine} />
           </Grid>
@@ -975,6 +1082,9 @@ const Dashboard = () => {
                               <Box sx={{ mt: 0.5 }}>
                                 <Typography variant="caption" display="block">
                                   <strong>Estimated Hours:</strong> {routing.estimated_hours || 'Not set'}
+                                </Typography>
+                                <Typography variant="caption" display="block">
+                                  <strong>Status:</strong> {routing.routing_status === 'C' ? 'Completed' : routing.routing_status || 'Not set'}
                                 </Typography>
                                 {routing.schedule_slot_id && (
                                   <>

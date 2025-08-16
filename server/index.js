@@ -45,6 +45,9 @@ app.use('/api/shift-capacity', require('./routes/shift-capacity'));
 app.use('/api/outsourcing', require('./routes/outsourcing'));
 app.use('/api/assembly', require('./routes/assembly-detection'));
 app.use('/api/locks', require('./routes/locks'));
+app.use('/api/displacement', require('./routes/displacement'));
+app.use('/api/undo', require('./routes/undo'));
+app.use('/api/inspection', require('./routes/inspection'));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

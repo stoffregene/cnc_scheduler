@@ -1,6 +1,5 @@
 import React from 'react';
 import { Box } from '@mui/material';
-import { useTheme } from '../contexts/ThemeContext';
 
 const Logo = ({ 
   variant = 'horizontal', 
@@ -9,18 +8,17 @@ const Logo = ({
   width = 'auto',
   sx = {} 
 }) => {
-  const { darkMode } = useTheme();
-  
+  // Since we're using a fixed dark theme now, we can simplify this
   const getLogoSrc = () => {
-    // Auto-detect color based on theme if color is 'auto'
-    const effectiveColor = color === 'auto' ? (darkMode ? 'white' : 'black') : color;
+    // Auto-detect color - always use white for our dark theme
+    const effectiveColor = color === 'auto' ? 'white' : color;
     
     if (variant === 'vertical') {
       return effectiveColor === 'white' ? '/logo-vertical-white.svg' : '/logo-vertical-black.svg';
     }
-    // For horizontal, if color is 'primary', use appropriate logo based on theme
+    // For horizontal, if color is 'primary', use white logo for dark theme
     if (color === 'primary') {
-      return darkMode ? '/logo-white.svg' : '/logo-black.svg';
+      return '/logo-white.svg';
     }
     return effectiveColor === 'white' ? '/logo-white.svg' : '/logo-black.svg';
   };

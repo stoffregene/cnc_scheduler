@@ -84,13 +84,17 @@ router.get('/dashboard/summary', async (req, res) => {
     // Get schedule summary
     const summaryResult = await pool.query(`
       SELECT 
-        COUNT(*) as total_schedules,
-        COUNT(CASE WHEN s.status = 'scheduled' THEN 1 END) as scheduled_count,
-        COUNT(CASE WHEN s.status = 'completed' THEN 1 END) as completed_count,
-        COUNT(CASE WHEN s.status = 'cancelled' THEN 1 END) as cancelled_count,
-        COALESCE(SUM(EXTRACT(EPOCH FROM (s.end_time - s.start_time))/3600), 0) as total_hours
-      FROM schedules s
-      ${dateFilter}
+        COUNT(DISTINCT ss.job_id) as total_scheduled_jobs,
+        COUNT(DISTINCT CASE WHEN ss.status = 'scheduled' THEN ss.job_id END) as scheduled_jobs_count,
+        COUNT(DISTINCT CASE WHEN ss.status = 'completed' THEN ss.job_id END) as completed_jobs_count,
+        COUNT(DISTINCT CASE WHEN ss.status = 'cancelled' THEN ss.job_id END) as cancelled_jobs_count,
+        COUNT(*) as total_operations,
+        COUNT(CASE WHEN ss.status = 'scheduled' THEN 1 END) as scheduled_operations_count,
+        COUNT(CASE WHEN ss.status = 'completed' THEN 1 END) as completed_operations_count,
+        COUNT(CASE WHEN ss.status = 'cancelled' THEN 1 END) as cancelled_operations_count,
+        COALESCE(SUM(ss.duration_minutes)/60.0, 0) as total_hours
+      FROM schedule_slots ss
+      ${dateFilter ? dateFilter.replace('s.start_time', 'ss.slot_date') : ''}
     `, params);
     
     // Get machine utilization
@@ -98,10 +102,10 @@ router.get('/dashboard/summary', async (req, res) => {
       SELECT 
         m.name as machine_name,
         m.id as machine_id,
-        COUNT(s.id) as schedule_count,
-        COALESCE(SUM(EXTRACT(EPOCH FROM (s.end_time - s.start_time))/3600), 0) as total_hours
+        COUNT(ss.id) as schedule_count,
+        COALESCE(SUM(ss.duration_minutes)/60.0, 0) as total_hours
       FROM machines m
-      LEFT JOIN schedules s ON m.id = s.machine_id AND s.status IN ('scheduled', 'pending', 'in_progress') ${dateFilter ? 'AND ' + dateFilter.replace('WHERE', '') : ''}
+      LEFT JOIN schedule_slots ss ON m.id = ss.machine_id AND ss.status IN ('scheduled', 'pending', 'in_progress') ${dateFilter ? 'AND ' + dateFilter.replace('WHERE', '').replace('DATE(s.start_time)', 'ss.slot_date') : ''}
       WHERE m.status = 'active'
       GROUP BY m.id, m.name
       ORDER BY total_hours DESC
@@ -113,10 +117,10 @@ router.get('/dashboard/summary', async (req, res) => {
         e.first_name,
         e.last_name,
         e.id as employee_id,
-        COUNT(s.id) as schedule_count,
-        COALESCE(SUM(EXTRACT(EPOCH FROM (s.end_time - s.start_time))/3600), 0) as total_hours
+        COUNT(ss.id) as schedule_count,
+        COALESCE(SUM(ss.duration_minutes)/60.0, 0) as total_hours
       FROM employees e
-      LEFT JOIN schedules s ON e.id = s.employee_id AND s.status IN ('scheduled', 'pending', 'in_progress') ${dateFilter ? 'AND ' + dateFilter.replace('WHERE', '') : ''}
+      LEFT JOIN schedule_slots ss ON e.id = ss.employee_id AND ss.status IN ('scheduled', 'pending', 'in_progress') ${dateFilter ? 'AND ' + dateFilter.replace('WHERE', '').replace('DATE(s.start_time)', 'ss.slot_date') : ''}
       WHERE e.status = 'active'
       GROUP BY e.id, e.first_name, e.last_name
       ORDER BY total_hours DESC
@@ -143,7 +147,7 @@ router.get('/machine-view', async (req, res) => {
     const params = [];
     
     if (start_date && end_date) {
-      dateFilter = 'AND DATE(s.start_time) BETWEEN $1 AND $2';
+      dateFilter = 'AND ss.slot_date BETWEEN $1 AND $2';
       params.push(start_date, end_date);
     }
     
@@ -153,28 +157,28 @@ router.get('/machine-view', async (req, res) => {
         m.name as machine_name,
         m.model as machine_model,
         m.status as machine_status,
-        mg.name as group_name,
+        array_agg(DISTINCT mg.name) FILTER (WHERE mg.name IS NOT NULL) as group_names,
         json_agg(
           json_build_object(
-            'id', s.id,
+            'id', ss.id,
             'job_number', j.job_number,
             'part_name', j.part_name,
             'customer_name', j.customer_name,
             'priority', j.priority,
-            'status', s.status,
-            'start_time', s.start_time,
-            'end_time', s.end_time,
-            'employee_name', CONCAT(e.first_name, ' ', e.last_name)
-          ) ORDER BY s.start_time
-        ) FILTER (WHERE s.id IS NOT NULL) as schedules
+            'status', ss.status,
+            'start_time', ss.start_datetime,
+            'end_time', ss.end_datetime,
+            'employee_name', e.first_name || ' ' || e.last_name
+          ) ORDER BY ss.start_datetime
+        ) FILTER (WHERE ss.id IS NOT NULL) as schedules
       FROM machines m
       LEFT JOIN machine_group_assignments mga ON m.id = mga.machine_id
       LEFT JOIN machine_groups mg ON mga.machine_group_id = mg.id
-      LEFT JOIN schedules s ON m.id = s.machine_id AND s.status IN ('scheduled', 'pending', 'in_progress') ${dateFilter}
-      LEFT JOIN jobs j ON s.job_id = j.id
-      LEFT JOIN employees e ON s.employee_id = e.id
+      LEFT JOIN schedule_slots ss ON m.id = ss.machine_id AND ss.status IN ('scheduled', 'pending', 'in_progress') ${dateFilter}
+      LEFT JOIN jobs j ON ss.job_id = j.id
+      LEFT JOIN employees e ON ss.employee_id = e.id
       WHERE m.status = 'active'
-      GROUP BY m.id, m.name, m.model, m.status, mg.name
+      GROUP BY m.id, m.name, m.model, m.status
       ORDER BY m.name
     `, params);
     

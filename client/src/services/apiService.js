@@ -82,6 +82,7 @@ export const apiService = {
     create: (data) => api.post('/api/jobs', data),
     update: (id, data) => api.put(`/api/jobs/${id}`, data),
     delete: (id) => api.delete(`/api/jobs/${id}`),
+    deleteAll: () => api.delete('/api/jobs/delete-all'),
     importCSV: (file) => {
       const formData = new FormData();
       formData.append('csvFile', file);

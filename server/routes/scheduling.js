@@ -20,8 +20,12 @@ router.get('/slots', async (req, res) => {
         j.job_number,
         j.customer_name,
         j.part_name,
+        j.quantity,
+        j.due_date,
+        j.priority,
         jr.operation_number,
         jr.operation_name,
+        jr.notes,
         m.name as machine_name,
         e.first_name || ' ' || e.last_name as employee_name
       FROM schedule_slots ss
@@ -97,6 +101,9 @@ router.get('/machine-workload', async (req, res) => {
             'job_number', j.job_number,
             'customer_name', j.customer_name,
             'part_name', j.part_name,
+            'quantity', j.quantity,
+            'due_date', j.due_date,
+            'priority', j.priority,
             'operation_number', jr.operation_number,
             'operation_name', jr.operation_name,
             'start_datetime', ss.start_datetime,
@@ -106,7 +113,7 @@ router.get('/machine-workload', async (req, res) => {
             'employee_name', e.first_name || ' ' || e.last_name,
             'priority_score', ss.priority_score,
             'sequence_order', ss.sequence_order,
-            'notes', ss.notes
+            'notes', jr.notes
           ) ORDER BY ss.start_datetime
         ) FILTER (WHERE ss.id IS NOT NULL) as scheduled_jobs_detail
       FROM machines m
