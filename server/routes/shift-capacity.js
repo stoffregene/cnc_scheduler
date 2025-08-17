@@ -44,23 +44,22 @@ router.get('/capacity', async (req, res) => {
     }
     
     // Get all employees with their work schedules and scheduled job hours for the date range
+    // Use the same get_employee_working_hours function that the scheduling system uses
     const capacityQuery = `
       SELECT 
+        e.id as numeric_id,
         e.employee_id,
         e.first_name,
         e.last_name,
         e.position,
-        e.shift_type,
-        e.start_time,
-        e.end_time,
         COALESCE(SUM(ss.duration_minutes), 0) as total_scheduled_minutes,
         COUNT(DISTINCT ss.slot_date) as working_days
       FROM employees e
-      LEFT JOIN schedule_slots ss ON e.numeric_id = ss.employee_id
+      LEFT JOIN schedule_slots ss ON e.id = ss.employee_id
         AND ss.slot_date BETWEEN $1::date AND $2::date
         AND ss.status IN ('scheduled', 'in_progress')
       WHERE e.status = 'active'
-      GROUP BY e.employee_id, e.first_name, e.last_name, e.position, e.shift_type, e.start_time, e.end_time
+      GROUP BY e.id, e.employee_id, e.first_name, e.last_name, e.position
       ORDER BY e.first_name, e.last_name
     `;
     
@@ -81,53 +80,43 @@ router.get('/capacity', async (req, res) => {
                       period === 'week' ? 7 : 
                       Math.ceil((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1;
     
-    result.rows.forEach(employee => {
-      if (!employee.start_time || !employee.end_time) {
-        return; // Skip employees without work schedules
-      }
-      
-      // Parse shift times
-      const startHour = parseInt(employee.start_time.split(':')[0]);
-      const endHour = parseInt(employee.end_time.split(':')[0]);
-      
-      // Calculate daily shift duration (handle overnight shifts)
-      let dailyShiftDuration;
-      if (endHour > startHour) {
-        dailyShiftDuration = endHour - startHour;
-      } else {
-        // Overnight shift
-        dailyShiftDuration = (24 - startHour) + endHour;
-      }
-      
-      // Calculate total capacity for the period (assuming 5 working days per week)
-      let totalCapacityHours;
-      if (period === 'day') {
-        totalCapacityHours = dailyShiftDuration;
-      } else if (period === 'week') {
-        totalCapacityHours = dailyShiftDuration * 5; // 5 working days
-      } else { // month
-        const workingDaysInPeriod = Math.floor(periodDays * (5/7)); // Approximate working days
-        totalCapacityHours = dailyShiftDuration * workingDaysInPeriod;
-      }
-      
-      // Convert scheduled minutes to hours
-      const scheduledHours = employee.total_scheduled_minutes / 60;
-      
-      // Use the actual shift_type field from employee record
-      let shiftType;
-      if (employee.shift_type === 'day') {
-        shiftType = '1st';
-        firstShiftHours += totalCapacityHours;
-        firstShiftScheduledHours += scheduledHours;
-        firstShiftOperators++;
-      } else if (employee.shift_type === 'night') {
-        shiftType = '2nd';
-        secondShiftHours += totalCapacityHours;
-        secondShiftScheduledHours += scheduledHours;
-        secondShiftOperators++;
-      } else {
-        // Default fallback if shift_type is null - classify by start time
-        if (startHour >= 4 && startHour <= 15) {
+    // Process each employee using the same get_employee_working_hours function as the scheduler
+    for (const employee of result.rows) {
+      try {
+        // Debug: Check Chris Johnson specifically
+        if (employee.first_name === 'Chris' && employee.last_name === 'Johnson') {
+          console.log(`[DEBUG] Processing Chris Johnson - scheduled minutes: ${employee.total_scheduled_minutes}`);
+        }
+        
+        // Get actual working hours using the system function (for a representative workday)
+        const workingHoursResult = await pool.query(`
+          SELECT * FROM get_employee_working_hours($1, $2::date)
+        `, [employee.numeric_id, startDate]); // Use start date as representative day
+        
+        if (workingHoursResult.rows.length === 0 || !workingHoursResult.rows[0].is_working_day) {
+          continue; // Skip employees who don't work or have no schedule
+        }
+        
+        const workingHours = workingHoursResult.rows[0];
+        const dailyShiftDuration = parseFloat(workingHours.duration_hours);
+        
+        // Calculate total capacity for the period
+        let totalCapacityHours;
+        if (period === 'day') {
+          totalCapacityHours = dailyShiftDuration;
+        } else if (period === 'week') {
+          totalCapacityHours = dailyShiftDuration * 5; // 5 working days
+        } else { // month
+          const workingDaysInPeriod = Math.floor(periodDays * (5/7)); // Approximate working days
+          totalCapacityHours = dailyShiftDuration * workingDaysInPeriod;
+        }
+        
+        // Convert scheduled minutes to hours
+        const scheduledHours = employee.total_scheduled_minutes / 60;
+        
+        // Determine shift based on start hour (same logic as scheduling system)
+        let shiftType;
+        if (workingHours.start_hour >= 4 && workingHours.start_hour <= 15) {
           shiftType = '1st';
           firstShiftHours += totalCapacityHours;
           firstShiftScheduledHours += scheduledHours;
@@ -138,24 +127,34 @@ router.get('/capacity', async (req, res) => {
           secondShiftScheduledHours += scheduledHours;
           secondShiftOperators++;
         }
+        
+        // Debug logging for Chris Johnson
+        if (employee.first_name === 'Chris' && employee.last_name === 'Johnson') {
+          console.log(`[DEBUG] Chris Johnson: scheduledMinutes=${employee.total_scheduled_minutes}, start_hour=${workingHours.start_hour}, scheduledHours=${scheduledHours}, shiftType=${shiftType}`);
+        }
+        
+        const utilizationPercent = totalCapacityHours > 0 ? (scheduledHours / totalCapacityHours) * 100 : 0;
+        
+        operators.push({
+          employee_id: employee.employee_id,
+          name: `${employee.first_name} ${employee.last_name}`,
+          position: employee.position,
+          shift_start: `${workingHours.start_hour}:00`,
+          shift_end: `${workingHours.end_hour}:00`,
+          daily_shift_duration: dailyShiftDuration,
+          total_capacity_hours: totalCapacityHours,
+          scheduled_hours: scheduledHours,
+          utilization_percent: Math.round(utilizationPercent * 10) / 10,
+          shift_type: shiftType,
+          working_days: employee.working_days || 0
+        });
+        
+      } catch (error) {
+        console.error(`Error processing employee ${employee.first_name} ${employee.last_name}:`, error);
+        // Skip this employee if there's an error getting their working hours
+        continue;
       }
-      
-      const utilizationPercent = totalCapacityHours > 0 ? (scheduledHours / totalCapacityHours) * 100 : 0;
-      
-      operators.push({
-        employee_id: employee.employee_id,
-        name: `${employee.first_name} ${employee.last_name}`,
-        position: employee.position,
-        shift_start: employee.start_time,
-        shift_end: employee.end_time,
-        daily_shift_duration: dailyShiftDuration,
-        total_capacity_hours: totalCapacityHours,
-        scheduled_hours: scheduledHours,
-        utilization_percent: Math.round(utilizationPercent * 10) / 10,
-        shift_type: shiftType,
-        working_days: employee.working_days || 0
-      });
-    });
+    }
     
     // Apply efficiency modifiers
     const firstShiftCapacity = firstShiftHours * 0.85; // 85% efficiency

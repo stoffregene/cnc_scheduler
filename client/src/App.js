@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import {
   AppBar,
   Box,
@@ -11,11 +11,10 @@ import {
   ListItemButton,
   Toolbar,
   Typography,
-  Divider,
-  Chip,
   Avatar,
-  Badge,
   Collapse,
+  Tooltip,
+  CircularProgress,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -26,7 +25,6 @@ import {
   Build as BuildIcon,
   Visibility as VisibilityIcon,
   Settings as SettingsIcon,
-  Notifications as NotificationsIcon,
   ExpandLess,
   ExpandMore,
   ViewKanban as ViewKanbanIcon,
@@ -34,56 +32,114 @@ import {
   Factory as FactoryIcon,
   SwapHoriz as SwapHorizIcon,
   Search as SearchIcon,
+  AdminPanelSettings as AdminIcon,
+  Logout as LogoutIcon,
 } from '@mui/icons-material';
 import { Routes, Route, useLocation } from 'react-router-dom';
-
-import Dashboard from './pages/Dashboard';
-import JobManagement from './pages/JobManagement';
-import ScheduleView from './pages/ScheduleView';
-import MachineQueues from './pages/MachineQueues';
-import EmployeeDirectory from './pages/EmployeeDirectory';
-import MachineDirectory from './pages/MachineDirectory';
-import OperatorSchedule from './pages/OperatorSchedule';
-import Scheduling from './pages/Scheduling';
-import DisplacementLogs from './pages/DisplacementLogs';
-import InspectionQueue from './pages/InspectionQueue';
 import Logo from './components/Logo';
+import ProtectedRoute from './components/ProtectedRoute';
+import PermissionGuard from './components/PermissionGuard';
+import { useAuth } from './contexts/AuthContext';
+import { usePermissions } from './hooks/usePermissions';
+
+// Lazy load page components for better bundle splitting
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const JobManagement = lazy(() => import('./pages/JobManagement'));
+const ScheduleView = lazy(() => import('./pages/ScheduleView'));
+const MachineQueues = lazy(() => import('./pages/MachineQueues'));
+const EmployeeDirectory = lazy(() => import('./pages/EmployeeDirectory'));
+const MachineDirectory = lazy(() => import('./pages/MachineDirectory'));
+const OperatorSchedule = lazy(() => import('./pages/OperatorSchedule'));
+const Scheduling = lazy(() => import('./pages/Scheduling'));
+const DisplacementLogs = lazy(() => import('./pages/DisplacementLogs'));
+const InspectionQueue = lazy(() => import('./pages/InspectionQueue'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
 
 const drawerWidth = 280;
 
-const menuItems = [
-  { 
-    text: 'Dashboard', 
-    icon: <DashboardIcon />, 
-    path: '/',
-    category: 'main'
-  },
-  { 
-    text: 'Production Planning',
-    icon: <FactoryIcon />,
-    category: 'section',
-    children: [
-      { text: 'Job Management', icon: <WorkIcon />, path: '/jobs' },
-      { text: 'Scheduling Engine', icon: <ScheduleIcon />, path: '/scheduling' },
-      { text: 'Schedule Calendar', icon: <CalendarIcon />, path: '/schedule' },
-      { text: 'Machine Queues', icon: <ViewKanbanIcon />, path: '/machine-queues' },
-      { text: 'Inspection Queue', icon: <SearchIcon />, path: '/inspection-queue' },
-      { text: 'Displacement Logs', icon: <SwapHorizIcon />, path: '/displacement-logs' },
-    ]
-  },
-  { 
-    text: 'Resource Management',
-    icon: <PeopleIcon />,
-    category: 'section',
-    children: [
-      { text: 'Employee Directory', icon: <PeopleIcon />, path: '/employees' },
-      { text: 'Operator Schedules', icon: <VisibilityIcon />, path: '/operator-schedule' },
-      { text: 'Machine Directory', icon: <BuildIcon />, path: '/machines' },
-    ]
-  },
-];
+const getMenuItems = (permissions) => {
+  const items = [
+    { 
+      text: 'Dashboard', 
+      icon: <DashboardIcon />, 
+      path: '/',
+      category: 'main',
+      permission: 'dashboard.view'
+    }
+  ];
+
+  // Production Planning section
+  const productionChildren = [];
+  if (permissions['jobs.view']) {
+    productionChildren.push({ text: 'Job Management', icon: <WorkIcon />, path: '/jobs', permission: 'jobs.view' });
+  }
+  if (permissions['schedules.auto_schedule']) {
+    productionChildren.push({ text: 'Scheduling Engine', icon: <ScheduleIcon />, path: '/scheduling', permission: 'schedules.auto_schedule' });
+  }
+  if (permissions['schedules.view']) {
+    productionChildren.push({ text: 'Schedule Calendar', icon: <CalendarIcon />, path: '/schedule', permission: 'schedules.view' });
+  }
+  if (permissions['machines.view_queues']) {
+    productionChildren.push({ text: 'Machine Queues', icon: <ViewKanbanIcon />, path: '/machine-queues', permission: 'machines.view_queues' });
+  }
+  if (permissions['inspection.view']) {
+    productionChildren.push({ text: 'Inspection Queue', icon: <SearchIcon />, path: '/inspection-queue', permission: 'inspection.view' });
+  }
+  if (permissions['displacement.view']) {
+    productionChildren.push({ text: 'Displacement Logs', icon: <SwapHorizIcon />, path: '/displacement-logs', permission: 'displacement.view' });
+  }
+
+  if (productionChildren.length > 0) {
+    items.push({
+      text: 'Production Planning',
+      icon: <FactoryIcon />,
+      category: 'section',
+      children: productionChildren
+    });
+  }
+
+  // Resource Management section
+  const resourceChildren = [];
+  if (permissions['employees.view']) {
+    resourceChildren.push({ text: 'Employee Directory', icon: <PeopleIcon />, path: '/employees', permission: 'employees.view' });
+  }
+  if (permissions['employees.view_schedules']) {
+    resourceChildren.push({ text: 'Operator Schedules', icon: <VisibilityIcon />, path: '/operator-schedule', permission: 'employees.view_schedules' });
+  }
+  if (permissions['machines.view']) {
+    resourceChildren.push({ text: 'Machine Directory', icon: <BuildIcon />, path: '/machines', permission: 'machines.view' });
+  }
+
+  if (resourceChildren.length > 0) {
+    items.push({
+      text: 'Resource Management',
+      icon: <PeopleIcon />,
+      category: 'section',
+      children: resourceChildren
+    });
+  }
+
+  // Administration section
+  const adminChildren = [];
+  if (permissions['users.view']) {
+    adminChildren.push({ text: 'User Management', icon: <AdminIcon />, path: '/users', permission: 'users.view' });
+  }
+
+  if (adminChildren.length > 0) {
+    items.push({
+      text: 'Administration',
+      icon: <AdminIcon />,
+      category: 'section',
+      children: adminChildren
+    });
+  }
+
+  return items;
+};
 
 function App() {
+  const { user, logout } = useAuth();
+  const { permissions, can } = usePermissions();
   const [mobileOpen, setMobileOpen] = useState(false);
   
   // Load saved sidebar state from localStorage or use defaults
@@ -96,10 +152,11 @@ function App() {
         console.error('Failed to parse saved sidebar state:', e);
       }
     }
-    return { 'Production Planning': true, 'Resource Management': true };
+    return { 'Production Planning': true, 'Resource Management': true, 'Administration': true };
   });
   
   const location = useLocation();
+  const menuItems = getMenuItems(permissions || {});
 
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
@@ -142,33 +199,6 @@ function App() {
           />
         </Box>
         
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Chip 
-            label="LIVE SYSTEM" 
-            size="small" 
-            sx={{ 
-              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
-              border: '1px solid rgba(16, 185, 129, 0.3)',
-              color: '#10b981',
-              fontSize: '0.7rem',
-              fontWeight: 600,
-              '&::before': {
-                content: '""',
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                backgroundColor: '#10b981',
-                marginRight: '4px',
-                animation: 'pulse 2s infinite'
-              }
-            }}
-          />
-          <Badge color="error" variant="dot">
-            <IconButton size="small" sx={{ color: '#9ca3af' }}>
-              <NotificationsIcon fontSize="small" />
-            </IconButton>
-          </Badge>
-        </Box>
       </Box>
 
       {/* Navigation */}
@@ -380,22 +410,27 @@ function App() {
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Badge color="error" variant="dot">
-              <IconButton sx={{ color: '#9ca3af' }}>
-                <NotificationsIcon />
+            <Tooltip title={`${user?.first_name} ${user?.last_name} (${user?.role})`}>
+              <Avatar
+                sx={{
+                  width: 32,
+                  height: 32,
+                  background: 'linear-gradient(135deg, #E82A2A 0%, #B71C1C 100%)',
+                  fontSize: '0.8rem',
+                  fontWeight: 'bold'
+                }}
+              >
+                {user?.first_name?.[0]}{user?.last_name?.[0]}
+              </Avatar>
+            </Tooltip>
+            <Tooltip title="Logout">
+              <IconButton 
+                onClick={logout}
+                sx={{ color: '#9ca3af' }}
+              >
+                <LogoutIcon />
               </IconButton>
-            </Badge>
-            <Avatar
-              sx={{
-                width: 32,
-                height: 32,
-                background: 'linear-gradient(135deg, #E82A2A 0%, #B71C1C 100%)',
-                fontSize: '0.8rem',
-                fontWeight: 'bold'
-              }}
-            >
-              AD
-            </Avatar>
+            </Tooltip>
           </Box>
         </Toolbar>
       </AppBar>
@@ -439,18 +474,79 @@ function App() {
           mt: 8,
         }}
       >
-        <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/jobs" element={<JobManagement />} />
-            <Route path="/scheduling" element={<Scheduling />} />
-            <Route path="/schedule" element={<ScheduleView />} />
-            <Route path="/machine-queues" element={<MachineQueues />} />
-            <Route path="/inspection-queue" element={<InspectionQueue />} />
-            <Route path="/displacement-logs" element={<DisplacementLogs />} />
-            <Route path="/employees" element={<EmployeeDirectory />} />
-            <Route path="/operator-schedule" element={<OperatorSchedule />} />
-            <Route path="/machines" element={<MachineDirectory />} />
-          </Routes>
+        <ProtectedRoute>
+          <Suspense fallback={
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column',
+              justifyContent: 'center', 
+              alignItems: 'center', 
+              height: '50vh',
+              gap: 2
+            }}>
+              <CircularProgress />
+              <Typography variant="h6" sx={{ color: '#e4e6eb' }}>Loading...</Typography>
+            </Box>
+          }>
+            <Routes>
+            <Route path="/" element={
+              <PermissionGuard permission="dashboard.view">
+                <Dashboard />
+              </PermissionGuard>
+            } />
+            <Route path="/jobs" element={
+              <PermissionGuard permission="jobs.view">
+                <JobManagement />
+              </PermissionGuard>
+            } />
+            <Route path="/scheduling" element={
+              <PermissionGuard permission="schedules.auto_schedule">
+                <Scheduling />
+              </PermissionGuard>
+            } />
+            <Route path="/schedule" element={
+              <PermissionGuard permission="schedules.view">
+                <ScheduleView />
+              </PermissionGuard>
+            } />
+            <Route path="/machine-queues" element={
+              <PermissionGuard permission="machines.view_queues">
+                <MachineQueues />
+              </PermissionGuard>
+            } />
+            <Route path="/inspection-queue" element={
+              <PermissionGuard permission="inspection.view">
+                <InspectionQueue />
+              </PermissionGuard>
+            } />
+            <Route path="/displacement-logs" element={
+              <PermissionGuard permission="displacement.view">
+                <DisplacementLogs />
+              </PermissionGuard>
+            } />
+            <Route path="/employees" element={
+              <PermissionGuard permission="employees.view">
+                <EmployeeDirectory />
+              </PermissionGuard>
+            } />
+            <Route path="/operator-schedule" element={
+              <PermissionGuard permission="employees.view_schedules">
+                <OperatorSchedule />
+              </PermissionGuard>
+            } />
+            <Route path="/machines" element={
+              <PermissionGuard permission="machines.view">
+                <MachineDirectory />
+              </PermissionGuard>
+            } />
+            <Route path="/users" element={
+              <PermissionGuard permission="users.view">
+                <UserManagement />
+              </PermissionGuard>
+            } />
+            </Routes>
+          </Suspense>
+        </ProtectedRoute>
       </Box>
     </Box>
   );

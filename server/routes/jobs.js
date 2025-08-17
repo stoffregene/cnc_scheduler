@@ -6,6 +6,7 @@ const { body, validationResult } = require('express-validator');
 const JobBossCSVParser = require('../services/jobbossCSVParser');
 const JobBossCSVParserV2 = require('../services/jobbossCSVParserV2');
 const PriorityService = require('../services/priorityService');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 const router = express.Router();
 
 // Configure multer for file uploads
@@ -21,7 +22,7 @@ const upload = multer({
 });
 
 // Get all jobs
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, requirePermission('jobs.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { status, priority, due_date } = req.query;
@@ -97,7 +98,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get jobs awaiting shipping (all operations completed but job still active) - MUST BE BEFORE /:id route
-router.get('/awaiting-shipping', async (req, res) => {
+router.get('/awaiting-shipping', authenticateToken, requirePermission('jobs.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     
@@ -200,7 +201,7 @@ router.get('/awaiting-shipping', async (req, res) => {
 });
 
 // Get job by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, requirePermission('jobs.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
@@ -236,7 +237,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create new job
-router.post('/', [
+router.post('/', authenticateToken, requirePermission('jobs.create'), [
   body('job_number').notEmpty().withMessage('Job number is required'),
   body('part_name').notEmpty().withMessage('Part name is required'),
   body('quantity').isInt({ min: 1 }).withMessage('Quantity must be at least 1'),
@@ -339,7 +340,7 @@ router.post('/', [
 });
 
 // Update job
-router.put('/:id', [
+router.put('/:id', authenticateToken, requirePermission('jobs.edit'), [
   body('priority').optional().isInt({ min: 1, max: 10 }).withMessage('Priority must be between 1 and 10')
 ], async (req, res) => {
   try {
@@ -443,7 +444,7 @@ router.put('/:id', [
 });
 
 // Delete all jobs endpoint (MUST be before /:id route)
-router.delete('/delete-all', async (req, res) => {
+router.delete('/delete-all', authenticateToken, requirePermission('jobs.delete'), async (req, res) => {
   const { pool } = req.app.locals;
   const client = await pool.connect();
   
@@ -511,7 +512,7 @@ router.delete('/delete-all', async (req, res) => {
 });
 
 // Delete job
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, requirePermission('jobs.delete'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
@@ -588,7 +589,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Import jobs from JobBoss CSV format
-router.post('/import', upload.single('csvFile'), async (req, res) => {
+router.post('/import', authenticateToken, requirePermission('jobs.import'), upload.single('csvFile'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No CSV file uploaded' });
@@ -866,7 +867,7 @@ router.post('/import', upload.single('csvFile'), async (req, res) => {
 });
 
 // Get assembly jobs view
-router.get('/assemblies', async (req, res) => {
+router.get('/assemblies', authenticateToken, requirePermission('jobs.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     
@@ -883,7 +884,7 @@ router.get('/assemblies', async (req, res) => {
 });
 
 // Get job dependencies and scheduling constraints
-router.get('/:id/dependencies', async (req, res) => {
+router.get('/:id/dependencies', authenticateToken, requirePermission('jobs.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
@@ -919,7 +920,7 @@ router.get('/:id/dependencies', async (req, res) => {
 });
 
 // Get job routings for sequence validation
-router.get('/:id/routings', async (req, res) => {
+router.get('/:id/routings', authenticateToken, requirePermission('jobs.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
@@ -943,6 +944,7 @@ router.get('/:id/routings', async (req, res) => {
       ORDER BY jr.sequence_order, jr.operation_number
     `, [id]);
     
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching job routings:', error);
@@ -951,7 +953,7 @@ router.get('/:id/routings', async (req, res) => {
 });
 
 // Update a specific job routing (for machine swapping)
-router.put('/:jobId/routings/:routingId', async (req, res) => {
+router.put('/:jobId/routings/:routingId', authenticateToken, requirePermission('jobs.edit'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { jobId, routingId } = req.params;

@@ -14,6 +14,9 @@
       "Bash(psql:*)"
     ],
     "deny": [],
-    "defaultMode": "acceptEdits"
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": [
+      "C:\\c\\Users\\stoff\\Scheduler"
+    ]
   }
 }

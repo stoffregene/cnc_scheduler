@@ -1,9 +1,10 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 const router = express.Router();
 
 // Get all machines
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, requirePermission('machines.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { status, group_id } = req.query;
@@ -63,7 +64,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get availability matrix
-router.get('/availability-matrix', async (req, res) => {
+router.get('/availability-matrix', authenticateToken, requirePermission('machines.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { date } = req.query;
@@ -157,7 +158,7 @@ router.get('/availability-matrix', async (req, res) => {
 });
 
 // Get machine by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, requirePermission('machines.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
@@ -209,7 +210,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create new machine
-router.post('/', [
+router.post('/', authenticateToken, requirePermission('machines.create'), [
   body('name').notEmpty().withMessage('Machine name is required'),
   body('machine_group_ids').optional().isArray().withMessage('Machine group IDs must be an array')
 ], async (req, res) => {
@@ -297,7 +298,7 @@ router.post('/', [
 });
 
 // Update machine
-router.put('/:id', [
+router.put('/:id', authenticateToken, requirePermission('machines.edit'), [
   body('machine_group_ids').optional().isArray().withMessage('Machine group IDs must be an array')
 ], async (req, res) => {
   try {
@@ -438,7 +439,7 @@ router.put('/:id', [
 });
 
 // Delete machine
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, requirePermission('machines.delete'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
@@ -469,7 +470,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Get machine groups
-router.get('/groups/all', async (req, res) => {
+router.get('/groups/all', authenticateToken, requirePermission('machines.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     
@@ -489,7 +490,7 @@ router.get('/groups/all', async (req, res) => {
 });
 
 // Create machine group
-router.post('/groups', [
+router.post('/groups', authenticateToken, requirePermission('machines.create'), [
   body('name').notEmpty().withMessage('Group name is required')
 ], async (req, res) => {
   try {
@@ -519,7 +520,7 @@ router.post('/groups', [
 });
 
 // Update machine group
-router.put('/groups/:id', [
+router.put('/groups/:id', authenticateToken, requirePermission('machines.edit'), [
   body('name').notEmpty().withMessage('Group name is required')
 ], async (req, res) => {
   try {
@@ -555,7 +556,7 @@ router.put('/groups/:id', [
 });
 
 // Delete machine group
-router.delete('/groups/:id', async (req, res) => {
+router.delete('/groups/:id', authenticateToken, requirePermission('machines.delete'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
@@ -587,7 +588,7 @@ router.delete('/groups/:id', async (req, res) => {
 });
 
 // Get available machines for substitution
-router.get('/available/:jobId', async (req, res) => {
+router.get('/available/:jobId', authenticateToken, requirePermission('machines.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { jobId } = req.params;
@@ -643,7 +644,7 @@ router.get('/available/:jobId', async (req, res) => {
 });
 
 // Get operator-machine assignments
-router.get('/operators/:machineId', async (req, res) => {
+router.get('/operators/:machineId', authenticateToken, requirePermission('machines.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { machineId } = req.params;
@@ -667,7 +668,7 @@ router.get('/operators/:machineId', async (req, res) => {
 });
 
 // Create operator-machine assignment
-router.post('/operators', [
+router.post('/operators', authenticateToken, requirePermission('machines.assign_operators'), [
   body('employee_id').isInt().withMessage('Employee ID is required'),
   body('machine_id').isInt().withMessage('Machine ID is required'),
   body('proficiency_level').optional().isIn(['trained', 'expert', 'certified']).withMessage('Invalid proficiency level'),
@@ -701,7 +702,7 @@ router.post('/operators', [
 });
 
 // Update operator-machine assignment
-router.put('/operators/:id', [
+router.put('/operators/:id', authenticateToken, requirePermission('machines.assign_operators'), [
   body('proficiency_level').optional().isIn(['trained', 'expert', 'certified']).withMessage('Invalid proficiency level'),
   body('preference_rank').optional().isInt({ min: 1, max: 10 }).withMessage('Preference rank must be between 1 and 10')
 ], async (req, res) => {
@@ -734,7 +735,7 @@ router.put('/operators/:id', [
 });
 
 // Delete operator-machine assignment
-router.delete('/operators/:id', async (req, res) => {
+router.delete('/operators/:id', authenticateToken, requirePermission('machines.assign_operators'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { id } = req.params;
@@ -755,7 +756,7 @@ router.delete('/operators/:id', async (req, res) => {
 });
 
 // Get qualified operators for a machine
-router.get('/:id/operators', async (req, res) => {
+router.get('/:id/operators', authenticateToken, requirePermission('machines.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const machineId = req.params.id;

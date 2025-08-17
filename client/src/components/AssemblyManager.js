@@ -51,7 +51,7 @@ const AssemblyManager = ({ open, onClose, jobs = [] }) => {
     try {
       setLoading(true);
       const response = await apiService.get('/api/assembly/relationships');
-      setRelationships(response.data);
+      setRelationships(response);
     } catch (error) {
       console.error('Error fetching relationships:', error);
       toast.error('Failed to load assembly relationships');
@@ -73,7 +73,7 @@ const AssemblyManager = ({ open, onClose, jobs = [] }) => {
         child_job_ids: selectedChildren.map(id => parseInt(id))
       });
       
-      toast.success(response.data.message);
+      toast.success(response.message || 'Assembly relationships created successfully');
       setSelectedParent('');
       setSelectedChildren([]);
       fetchRelationships();
@@ -91,7 +91,7 @@ const AssemblyManager = ({ open, onClose, jobs = [] }) => {
       try {
         setLoading(true);
         const response = await apiService.delete(`/api/assembly/relationship/${parentJobId}`);
-        toast.success(response.data.message);
+        toast.success(response.message || 'Assembly relationship deleted successfully');
         fetchRelationships();
       } catch (error) {
         console.error('Error removing relationship:', error);
@@ -110,8 +110,8 @@ const AssemblyManager = ({ open, onClose, jobs = [] }) => {
         job_numbers: jobNumbers
       });
       
-      if (response.data.detected > 0) {
-        toast.success(`Auto-detected ${response.data.detected} assembly relationships`);
+      if (response.detected > 0) {
+        toast.success(`Auto-detected ${response.detected} assembly relationships`);
         fetchRelationships();
       } else {
         toast.info('No assembly relationships detected automatically');

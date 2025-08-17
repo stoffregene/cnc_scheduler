@@ -3,46 +3,59 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/cnc_scheduler',
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:sassysalad@localhost:5432/cnc_scheduler'
 });
 
 async function testChrisSchedule() {
   try {
-    console.log('Testing Chris Johnson\'s work schedule with the updated function...\n');
+    console.log('=== TESTING CHRIS JOHNSON SCHEDULE ===\n');
     
-    // Test the database function
-    const functionResult = await pool.query('SELECT * FROM get_employee_working_hours(7, CURRENT_DATE)');
-    console.log('Chris Johnson (ID 7) from get_employee_working_hours function:');
-    console.log(JSON.stringify(functionResult.rows[0], null, 2));
-    
-    // Also check the raw data from employee_work_schedules
-    const rawData = await pool.query(`
-      SELECT day_of_week, start_time, end_time, enabled,
-             EXTRACT(hour FROM start_time) + EXTRACT(minute FROM start_time)/60.0 as start_decimal,
-             EXTRACT(hour FROM end_time) + EXTRACT(minute FROM end_time)/60.0 as end_decimal,
-             EXTRACT(epoch FROM (end_time - start_time)) / 3600.0 as duration_decimal
-      FROM employee_work_schedules 
-      WHERE employee_id = 7 AND day_of_week = EXTRACT(dow FROM CURRENT_DATE)
+    // Get Chris Johnson's ID
+    const chrisResult = await pool.query(`
+      SELECT id FROM employees WHERE first_name = 'Chris' AND last_name = 'Johnson'
     `);
     
-    console.log('\nRaw data from employee_work_schedules:');
-    console.log(JSON.stringify(rawData.rows[0], null, 2));
-    
-    // Verify the fix
-    const scheduleData = functionResult.rows[0];
-    if (scheduleData) {
-      console.log(`\n✅ Analysis:`);
-      console.log(`Start: ${scheduleData.start_hour} hours (${scheduleData.start_hour}:${((scheduleData.start_hour % 1) * 60).toFixed(0).padStart(2, '0')})`);
-      console.log(`End: ${scheduleData.end_hour} hours (${Math.floor(scheduleData.end_hour)}:${((scheduleData.end_hour % 1) * 60).toFixed(0).padStart(2, '0')})`);
-      console.log(`Duration: ${scheduleData.duration_hours} hours`);
-      
-      if (scheduleData.duration_hours >= 11.5) {
-        console.log(`\n🎉 SUCCESS: Chris can now work ${scheduleData.duration_hours}h shifts, which is enough for 11.5h HMC operations!`);
-      } else {
-        console.log(`\n❌ STILL BROKEN: Chris can only work ${scheduleData.duration_hours}h, not enough for 11.5h operations`);
-      }
+    if (chrisResult.rows.length === 0) {
+      console.log('Chris Johnson not found');
+      return;
     }
+    
+    const chrisId = chrisResult.rows[0].id;
+    console.log(`Chris Johnson ID: ${chrisId}`);
+    
+    // Check what days he has work schedules for
+    console.log('\nChris work schedules:');
+    const schedules = await pool.query(`
+      SELECT day_of_week, start_time, end_time, enabled
+      FROM employee_work_schedules
+      WHERE employee_id = $1
+      ORDER BY day_of_week
+    `, [chrisId]);
+    
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    schedules.rows.forEach(s => {
+      console.log(`  ${dayNames[s.day_of_week]} (${s.day_of_week}): ${s.start_time}-${s.end_time} (enabled: ${s.enabled})`);
+    });
+    
+    // Test function with Monday (day_of_week = 1)
+    console.log('\nTesting function with Monday:');
+    const monday = '2025-01-20'; // A Monday
+    const workingHours = await pool.query(`
+      SELECT * FROM get_employee_working_hours($1, $2::date)
+    `, [chrisId, monday]);
+    
+    console.log('Monday result:', workingHours.rows[0]);
+    
+    if (workingHours.rows[0]) {
+      const wh = workingHours.rows[0];
+      const shift = (wh.start_hour >= 4 && wh.start_hour <= 15) ? '1st shift' : '2nd shift';
+      console.log(`Shift assignment for Monday: ${shift}`);
+    }
+    
+    // Check what day today is
+    const today = new Date();
+    const todayDayOfWeek = today.getDay() === 0 ? 7 : today.getDay(); // Convert Sunday from 0 to 7
+    console.log(`\nToday is day ${todayDayOfWeek} (${dayNames[todayDayOfWeek]})`);
     
   } catch (error) {
     console.error('Error:', error);

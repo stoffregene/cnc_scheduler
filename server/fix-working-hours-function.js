@@ -3,99 +3,130 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/cnc_scheduler',
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:sassysalad@localhost:5432/cnc_scheduler'
 });
 
 async function fixWorkingHoursFunction() {
   try {
-    console.log('Updating get_employee_working_hours function to use employee_work_schedules table...');
+    console.log('Fixing get_employee_working_hours function...\n');
     
-    // Drop the existing function first
-    await pool.query('DROP FUNCTION IF EXISTS get_employee_working_hours(integer, date)');
-    console.log('Dropped existing function...');
+    // Drop and recreate the function with correct column names
+    await pool.query('DROP FUNCTION IF EXISTS get_employee_working_hours(INTEGER, DATE)');
     
-    // Recreate the function to use the correct table
-    const updateFunctionSQL = `
-    CREATE OR REPLACE FUNCTION get_employee_working_hours(emp_id INTEGER, target_date DATE)
-    RETURNS TABLE (
-      start_hour INTEGER,
-      end_hour INTEGER,
-      duration_hours DECIMAL,
-      is_overnight BOOLEAN,
-      is_working_day BOOLEAN
-    ) AS $$
-    BEGIN
-      -- First check employee_work_schedules table (the correct source)
-      RETURN QUERY
-      SELECT 
-        EXTRACT(hour FROM ews.start_time)::INTEGER as start_hour,
-        EXTRACT(hour FROM ews.end_time)::INTEGER as end_hour,
-        EXTRACT(epoch FROM (ews.end_time - ews.start_time)) / 3600.0 as duration_hours,
-        false as is_overnight, -- Assuming no overnight shifts for now
-        ews.enabled as is_working_day
-      FROM employee_work_schedules ews
-      WHERE ews.employee_id = emp_id 
-        AND ews.day_of_week = EXTRACT(dow FROM target_date)
-        AND ews.enabled = true
-      LIMIT 1;
-      
-      -- If no employee_work_schedules entry, check employee_shift_schedule
-      IF NOT FOUND THEN
-        RETURN QUERY
+    const functionSQL = `
+      CREATE OR REPLACE FUNCTION get_employee_working_hours(emp_id INTEGER, work_date DATE)
+      RETURNS TABLE(
+        start_hour INTEGER,
+        end_hour INTEGER, 
+        duration_hours NUMERIC,
+        is_overnight BOOLEAN,
+        is_working_day BOOLEAN
+      ) AS $$
+      DECLARE
+        v_day_of_week INTEGER;
+        v_start_hour INTEGER;
+        v_end_hour INTEGER;
+        v_is_working BOOLEAN;
+        v_has_time_off BOOLEAN;
+      BEGIN
+        -- Get day of week (1=Monday, 7=Sunday)
+        v_day_of_week := EXTRACT(ISODOW FROM work_date);
+        
+        -- Check if employee has time off for this date
+        SELECT EXISTS(
+          SELECT 1 FROM employee_time_off
+          WHERE employee_id = emp_id
+          AND work_date BETWEEN start_date AND end_date
+        ) INTO v_has_time_off;
+        
+        -- If employee has time off, return not working
+        IF v_has_time_off THEN
+          RETURN QUERY SELECT 
+            0::INTEGER,
+            0::INTEGER,
+            0::NUMERIC,
+            FALSE,
+            FALSE;
+          RETURN;
+        END IF;
+        
+        -- First check employee_work_schedules (primary source) - FIX: use start_time/end_time
         SELECT 
-          ess.start_hour,
-          ess.end_hour,
-          ess.duration_hours,
-          ess.is_overnight,
-          ess.is_working_day
-        FROM employee_shift_schedule ess
-        WHERE ess.employee_id = emp_id 
-          AND ess.day_of_week = EXTRACT(dow FROM target_date)
-          AND ess.effective_date <= target_date
-        ORDER BY ess.effective_date DESC
-        LIMIT 1;
-      END IF;
-      
-      -- Final fallback to employee custom hours and shift patterns
-      IF NOT FOUND THEN
-        RETURN QUERY
-        SELECT 
-          COALESCE(e.custom_start_hour, sp.start_hour, 6) as start_hour,
-          COALESCE(e.custom_end_hour, sp.end_hour, 18) as end_hour,
-          COALESCE(e.custom_duration_hours, sp.duration_hours, 12.0) as duration_hours,
-          COALESCE(sp.is_overnight, false) as is_overnight,
           CASE 
-            WHEN e.work_days IS NOT NULL THEN EXTRACT(dow FROM target_date) = ANY(e.work_days)
-            ELSE (EXTRACT(dow FROM target_date) BETWEEN 1 AND 5) -- Mon-Fri default
-          END as is_working_day
-        FROM employees e
-        LEFT JOIN shift_patterns sp ON e.shift_pattern_id = sp.id
-        WHERE e.id = emp_id;
-      END IF;
-    END;
-    $$ LANGUAGE plpgsql;
+            WHEN ews.day_of_week = v_day_of_week THEN EXTRACT(HOUR FROM ews.start_time)::INTEGER
+            ELSE NULL
+          END,
+          CASE 
+            WHEN ews.day_of_week = v_day_of_week THEN EXTRACT(HOUR FROM ews.end_time)::INTEGER
+            ELSE NULL
+          END,
+          CASE 
+            WHEN ews.day_of_week = v_day_of_week THEN ews.enabled
+            ELSE FALSE
+          END
+        INTO v_start_hour, v_end_hour, v_is_working
+        FROM employee_work_schedules ews
+        WHERE ews.employee_id = emp_id
+        AND ews.day_of_week = v_day_of_week
+        AND ews.enabled = true
+        LIMIT 1;
+        
+        -- Default to standard hours if nothing found
+        IF v_start_hour IS NULL AND v_day_of_week BETWEEN 1 AND 5 THEN
+          v_start_hour := 8;
+          v_end_hour := 17;
+          v_is_working := TRUE;
+        ELSIF v_start_hour IS NULL THEN
+          v_is_working := FALSE;
+        END IF;
+        
+        -- Calculate duration and overnight status
+        IF v_is_working THEN
+          RETURN QUERY SELECT 
+            v_start_hour,
+            v_end_hour,
+            CASE 
+              WHEN v_end_hour > v_start_hour THEN (v_end_hour - v_start_hour)::NUMERIC
+              ELSE (24 - v_start_hour + v_end_hour)::NUMERIC
+            END,
+            v_end_hour < v_start_hour,
+            TRUE;
+        ELSE
+          RETURN QUERY SELECT 
+            0::INTEGER,
+            0::INTEGER,
+            0::NUMERIC,
+            FALSE,
+            FALSE;
+        END IF;
+      END;
+      $$ LANGUAGE plpgsql;
     `;
     
-    await pool.query(updateFunctionSQL);
+    await pool.query(functionSQL);
+    console.log('✅ Fixed get_employee_working_hours function');
     
-    console.log('✅ Function updated successfully!');
-    console.log('\nTesting the updated function...');
+    // Test the function with Chris Johnson
+    console.log('\nTesting with Chris Johnson:');
+    const chrisResult = await pool.query(`
+      SELECT id FROM employees WHERE first_name = 'Chris' AND last_name = 'Johnson'
+    `);
     
-    // Test with Drew
-    const drewResult = await pool.query('SELECT * FROM get_employee_working_hours(9, CURRENT_DATE)');
-    console.log(`Drew (ID 9): ${JSON.stringify(drewResult.rows[0], null, 2)}`);
-    
-    // Test with Kyle 
-    const kyleResult = await pool.query('SELECT * FROM get_employee_working_hours(13, CURRENT_DATE)');
-    console.log(`Kyle (ID 13): ${JSON.stringify(kyleResult.rows[0], null, 2)}`);
-    
-    console.log('\n✅ The scheduling service will now use the correct employee work schedules!');
-    console.log('Drew should show: 4:30 AM - 3:00 PM (10.5 hours)');
-    console.log('Kyle should show: 6:00 AM - 4:30 PM (10.5 hours)');
+    if (chrisResult.rows.length > 0) {
+      const chrisId = chrisResult.rows[0].id;
+      const workingHours = await pool.query(`
+        SELECT * FROM get_employee_working_hours($1, CURRENT_DATE)
+      `, [chrisId]);
+      
+      console.log('Chris Johnson working hours:', workingHours.rows[0]);
+      
+      const wh = workingHours.rows[0];
+      const shift = (wh.start_hour >= 4 && wh.start_hour <= 15) ? '1st shift' : '2nd shift';
+      console.log(`Shift assignment: ${shift}`);
+    }
     
   } catch (error) {
-    console.error('Error updating function:', error);
+    console.error('Error:', error);
   } finally {
     await pool.end();
   }

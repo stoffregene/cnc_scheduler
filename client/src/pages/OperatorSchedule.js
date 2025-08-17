@@ -64,10 +64,11 @@ const OperatorSchedule = () => {
     try {
       setLoading(true);
       const response = await apiService.employees.getAll();
-      setEmployees(response.data);
+      setEmployees(response || []); // apiService returns data directly
     } catch (error) {
       console.error('Error fetching employees:', error);
       toast.error('Failed to load employees');
+      setEmployees([]);
     } finally {
       setLoading(false);
     }
@@ -79,23 +80,54 @@ const OperatorSchedule = () => {
       const startOfWeekDate = startOfWeek(selectedDate, { weekStartsOn: 1 }); // Monday start
       const endOfWeekDate = endOfWeek(selectedDate, { weekStartsOn: 1 }); // Sunday end
       
-      const promises = employees.map(employee =>
-        apiService.employees.getAvailability(employee.id, {
+      const promises = employees.map(employee => {
+        const params = {
           start_date: format(startOfWeekDate, 'yyyy-MM-dd'),
           end_date: format(endOfWeekDate, 'yyyy-MM-dd')
-        })
-      );
+        };
+        
+        // Debug logging for Drew
+        if (employee.id === 9) {
+          console.log(`🔍 Making API call for Drew with params:`, params);
+        }
+        
+        return apiService.employees.getAvailability(employee.id, params);
+      });
       
       const responses = await Promise.all(promises);
       const availabilityMap = {};
       
       responses.forEach((response, index) => {
-        availabilityMap[employees[index].id] = response.data;
+        const employeeId = employees[index].id;
+        const employeeName = `${employees[index].first_name} ${employees[index].last_name}`;
+        availabilityMap[employeeId] = response || []; // apiService returns data directly
+        
+        // Debug logging for Drew
+        if (employeeId === 9) {
+          console.log(`🔍 API response for ${employeeName} (ID: ${employeeId}):`, {
+            dateRange: `${format(startOfWeekDate, 'yyyy-MM-dd')} to ${format(endOfWeekDate, 'yyyy-MM-dd')}`,
+            response: response,
+            entriesCount: response ? response.length : 0,
+            actualDates: response ? response.map(entry => ({
+              date: entry.date,
+              dateType: typeof entry.date,
+              dateString: entry.date instanceof Date ? entry.date.toISOString() : entry.date,
+              status: entry.status,
+              reason: entry.reason
+            })) : []
+          });
+        }
       });
       
       setAvailabilityData(availabilityMap);
     } catch (error) {
       console.error('Error fetching availability data:', error);
+      console.error('Full error details:', {
+        message: error.message,
+        response: error.response,
+        status: error.response?.status,
+        data: error.response?.data
+      });
       toast.error('Failed to load availability data');
     } finally {
       setLoadingAvailability(false);
@@ -112,7 +144,7 @@ const OperatorSchedule = () => {
       const workSchedulesMap = {};
       
       responses.forEach((response, index) => {
-        workSchedulesMap[employees[index].id] = response.data;
+        workSchedulesMap[employees[index].id] = response || []; // apiService returns data directly
       });
       
       setWorkSchedulesData(workSchedulesMap);
@@ -125,14 +157,64 @@ const OperatorSchedule = () => {
   const getWeekDays = () => {
     const start = startOfWeek(selectedDate, { weekStartsOn: 1 });
     const end = endOfWeek(selectedDate, { weekStartsOn: 1 });
-    return eachDayOfInterval({ start, end });
+    const days = eachDayOfInterval({ start, end });
+    
+    // Debug logging for current week
+    console.log(`📅 Current week display (${format(start, 'MMM dd')} - ${format(end, 'MMM dd')}):`, 
+      days.map(d => format(d, 'yyyy-MM-dd')));
+    
+    return days;
   };
 
   const getEmployeeAvailabilityForDate = (employeeId, date) => {
     const employeeAvailability = availabilityData[employeeId] || [];
     const dateStr = format(date, 'yyyy-MM-dd');
     
-    return employeeAvailability.find(entry => entry.date === dateStr);
+    // Debug logging for Drew
+    if (employeeId === 9) {
+      console.log(`🔍 Drew availability check for ${dateStr}:`, {
+        availabilityData: employeeAvailability,
+        lookingFor: dateStr,
+        found: employeeAvailability.find(entry => entry.date === dateStr)
+      });
+    }
+    
+    const found = employeeAvailability.find(entry => {
+      // Handle both string dates and Date objects
+      let entryDateStr;
+      if (entry.date instanceof Date) {
+        entryDateStr = format(entry.date, 'yyyy-MM-dd');
+      } else if (typeof entry.date === 'string') {
+        // Handle ISO date strings from database
+        entryDateStr = entry.date.split('T')[0];
+      } else {
+        entryDateStr = entry.date;
+      }
+      return entryDateStr === dateStr;
+    });
+    
+    // Debug logging for Drew
+    if (employeeId === 9) {
+      console.log(`🔍 Drew date comparison for ${dateStr}:`, {
+        entries: employeeAvailability.map(e => ({
+          date: e.date,
+          dateType: typeof e.date,
+          isDateObject: e.date instanceof Date,
+          formatted: e.date instanceof Date ? format(e.date, 'yyyy-MM-dd') : e.date,
+          matches: (e.date instanceof Date ? format(e.date, 'yyyy-MM-dd') : e.date) === dateStr,
+          status: e.status,
+          reason: e.reason
+        })),
+        found: found
+      });
+      
+      // Extra debug: show raw availability data
+      if (dateStr === "2025-08-18") {
+        console.log('🔍 Raw availability data for Drew:', employeeAvailability);
+      }
+    }
+    
+    return found;
   };
 
   const getEmployeeWorkScheduleForDate = (employeeId, date) => {

@@ -3,42 +3,47 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5732/cnc_scheduler',
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:sassysalad@localhost:5432/cnc_scheduler'
 });
 
 async function checkScheduleSchema() {
   try {
-    console.log('🔍 Checking schedule_slots table schema...\n');
+    console.log('=== CHECKING EMPLOYEE SCHEDULE TABLES SCHEMA ===\n');
     
-    const result = await pool.query(`
-      SELECT column_name, data_type, is_nullable 
+    // Check employee_work_schedules table structure
+    console.log('1. employee_work_schedules table columns:');
+    const workSchedulesSchema = await pool.query(`
+      SELECT column_name, data_type, is_nullable
       FROM information_schema.columns 
-      WHERE table_name = 'schedule_slots' 
+      WHERE table_name = 'employee_work_schedules'
       ORDER BY ordinal_position
     `);
     
-    console.log('Schedule_slots table columns:');
-    result.rows.forEach(row => {
-      console.log(`  ${row.column_name}: ${row.data_type} (nullable: ${row.is_nullable})`);
-    });
+    if (workSchedulesSchema.rows.length > 0) {
+      workSchedulesSchema.rows.forEach(col => {
+        console.log(`- ${col.column_name}: ${col.data_type} (nullable: ${col.is_nullable})`);
+      });
+    } else {
+      console.log('❌ employee_work_schedules table does not exist');
+    }
     
-    // Sample some schedule data
-    console.log('\n📊 Sample schedule slots:');
-    const sampleResult = await pool.query(`
-      SELECT ss.*, j.job_number, j.customer_name
-      FROM schedule_slots ss
-      JOIN jobs j ON ss.job_id = j.id
-      ORDER BY ss.id
-      LIMIT 5
+    // Check what tables exist that might contain schedule data
+    console.log('\n2. Looking for schedule-related tables:');
+    const tables = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' 
+      AND table_name LIKE '%schedule%' OR table_name LIKE '%shift%'
+      ORDER BY table_name
     `);
     
-    sampleResult.rows.forEach(slot => {
-      console.log(`   Job ${slot.job_number}: ${slot.scheduled_start} to ${slot.scheduled_end}`);
+    console.log('Found schedule/shift tables:');
+    tables.rows.forEach(table => {
+      console.log(`- ${table.table_name}`);
     });
     
   } catch (error) {
-    console.error('Error checking schema:', error);
+    console.error('Error:', error);
   } finally {
     await pool.end();
   }

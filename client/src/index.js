@@ -10,41 +10,47 @@ import './index.css';
 import './styles/globalStyles.css';
 
 import App from './App';
-import duraluxTheme from './theme/duraluxTheme';
+import { createAppTheme } from './themes/theme';
+import { AuthProvider } from './contexts/AuthContext';
 
-// Theme wrapper component with new Duralux theme
+// Theme wrapper component
 const ThemedApp = () => {
+  // Use dark mode by default to match the current app design
+  const theme = createAppTheme(true);
+  
   return (
-    <ThemeProvider theme={duraluxTheme}>
+    <ThemeProvider theme={theme}>
       <CssBaseline />
-      <App />
-      <Toaster
-        position="top-right"
-        toastOptions={{
-          duration: 4000,
-          style: {
-            background: 'linear-gradient(135deg, #131823 0%, #1a2030 100%)',
-            color: '#e4e6eb',
-            border: '1px solid rgba(0, 212, 255, 0.2)',
-            borderRadius: '8px',
-            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
-          },
-          success: {
+      <AuthProvider>
+        <App />
+        <Toaster
+          position="top-right"
+          toastOptions={{
+            duration: 4000,
             style: {
-              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
-              border: '1px solid rgba(16, 185, 129, 0.3)',
-              color: '#10b981',
+              background: 'linear-gradient(135deg, #131823 0%, #1a2030 100%)',
+              color: '#e4e6eb',
+              border: '1px solid rgba(0, 212, 255, 0.2)',
+              borderRadius: '8px',
+              boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
             },
-          },
-          error: {
-            style: {
-              background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              color: '#ef4444',
+            success: {
+              style: {
+                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                color: '#10b981',
+              },
             },
-          },
-        }}
-      />
+            error: {
+              style: {
+                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#ef4444',
+              },
+            },
+          }}
+        />
+      </AuthProvider>
     </ThemeProvider>
   );
 };

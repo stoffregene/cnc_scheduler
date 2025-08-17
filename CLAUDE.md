@@ -70,7 +70,35 @@ const validateOperationSequence = async (draggedSlot, targetDay) => {
 }
 ```
 
-## Phase 3: Advanced Features 🚧 IN PROGRESS
+## Phase 3: User Authentication & Access Control ✅ COMPLETED
+### Features Implemented:
+- [x] **JWT-Based Authentication System** - Secure token-based authentication with bcrypt password hashing
+- [x] **User Management Database Schema** - Users table with roles (admin, user, viewer) and activity tracking
+- [x] **Authentication Middleware** - Server-side JWT verification and role-based access control
+- [x] **Login Page Component** - Responsive login interface with proper error handling
+- [x] **Admin User Management Interface** - Full CRUD operations for user accounts
+- [x] **Protected Routes** - Authentication guards for all application routes
+- [x] **Role-Based Navigation** - Dynamic menu system that adapts to user permissions
+- [x] **Session Management** - Automatic logout on token expiration with persistent sessions
+
+### Authentication Features:
+1. **Secure Login System**: JWT tokens with 24-hour expiration
+2. **Role-Based Access**: Admin, User, and Viewer permission levels
+3. **Admin Controls**: Full user management (create, edit, delete, password reset)
+4. **Responsive Design**: Login page matches application theme (#E82A2A branding)
+5. **Default Admin Account**: Username: `admin`, Password: `admin123` (change in production)
+6. **Auto-Logout**: Proper cleanup of authentication state on logout
+
+### Key Files:
+- `server/routes/auth.js` - Authentication endpoints (login, logout, change password)
+- `server/routes/users.js` - User management endpoints (admin only)
+- `server/middleware/auth.js` - JWT verification and role checking
+- `client/src/contexts/AuthContext.js` - React authentication context
+- `client/src/pages/Login.js` - Login page component
+- `client/src/pages/UserManagement.js` - Admin user management interface
+- `client/src/components/ProtectedRoute.js` - Route protection wrapper
+
+## Phase 4: Advanced Features 🚧 IN PROGRESS
 ### Current Status:
 - [x] Build collision detection and automatic rescheduling on conflicts
 - [x] Fix auto-scheduling workload distribution (session tracking)
@@ -86,6 +114,20 @@ const validateOperationSequence = async (draggedSlot, targetDay) => {
 4. **Optimization** - Global schedule optimization algorithm
 
 ## API Endpoints
+
+### Authentication
+- `POST /api/auth/login` - User login (username/email + password)
+- `GET /api/auth/me` - Get current user info (requires auth token)
+- `POST /api/auth/logout` - User logout
+- `POST /api/auth/change-password` - Change user password (requires auth token)
+
+### User Management (Admin Only)
+- `GET /api/users` - List all users
+- `GET /api/users/:id` - Get specific user details
+- `POST /api/users` - Create new user
+- `PUT /api/users/:id` - Update user
+- `DELETE /api/users/:id` - Delete user
+- `POST /api/users/:id/reset-password` - Reset user password
 
 ### Jobs
 - `GET /api/jobs` - List all jobs with routings
@@ -110,6 +152,7 @@ const validateOperationSequence = async (draggedSlot, targetDay) => {
 ## Database Schema Notes
 
 ### Key Tables:
+- `users` - User accounts with authentication and role management
 - `jobs` - Job master data
 - `job_routings` - Operations with sequence_order for validation
 - `schedule_slots` - Scheduled time slots
@@ -233,7 +276,16 @@ node server/fix-working-hours-function.js
 
 ## Current Todo List Status ✅ ALL COMPLETED
 
-### Recently Completed Tasks:
+### Authentication System Implementation ✅ COMPLETED (December 2024):
+1. ✅ **User Authentication Database Schema** - Added users table with roles, password hashing, activity tracking
+2. ✅ **JWT Authentication Middleware** - Server-side token verification with role-based access control
+3. ✅ **User Management API Endpoints** - Complete CRUD operations for user accounts (admin only)
+4. ✅ **Login Page Component** - Responsive login interface matching application theme
+5. ✅ **Admin User Management Page** - Full interface for managing users, roles, and permissions
+6. ✅ **Authentication Guards** - Protected routes with role-based access control
+7. ✅ **Navigation Updates** - Dynamic menu system with logout functionality and user avatar
+
+### Previously Completed Tasks:
 1. ✅ **Manual Rescheduling Date Picker** - Added comprehensive date picker to job detail modal
 2. ✅ **Trickle-Down Rescheduling** - Implemented automatic rescheduling of subsequent operations
 3. ✅ **Employee Schedule Validation** - Fixed and validated operator working hours integration
@@ -345,8 +397,200 @@ node server/fix-working-hours-function.js
 - Jobs pushed past their due date
 - Multiple jobs affected (>5) requires manual confirmation
 
+## Mobile Network Access Configuration 📱🌐
+
+### Overview
+Complete guide for enabling mobile device access to the CNC Scheduler application on local networks. This configuration is **100% secure** and does NOT expose the application to the internet.
+
+### Security Architecture
+- ✅ **Local Network Only**: Devices on 192.168.1.x subnet only
+- ✅ **No Internet Exposure**: No port forwarding or public access
+- ✅ **Windows Firewall Protected**: Specific rules for local network only
+- ✅ **PostgreSQL Access Control**: Database restricted to local subnet
+
+### Step-by-Step Configuration
+
+#### 1. PostgreSQL Network Configuration
+
+**A. Configure PostgreSQL to Accept LAN Connections**
+
+Edit `C:\Program Files\PostgreSQL\17\data\postgresql.conf`:
+```conf
+# Already set by default in PostgreSQL 17:
+listen_addresses = '*'
+```
+
+**B. Configure Client Authentication**
+
+Edit `C:\Program Files\PostgreSQL\17\data\pg_hba.conf`:
+```conf
+# Add this line after the existing IPv4 local connections:
+# Local network connections (192.168.1.x):
+host    all             all             192.168.1.0/24          scram-sha-256
+```
+
+**C. Reload PostgreSQL Configuration**
+```bash
+# From server directory:
+node reload-pg-config.js
+```
+
+#### 2. Windows Firewall Configuration
+
+**Add PostgreSQL Firewall Rule** (requires Administrator privileges):
+```cmd
+netsh advfirewall firewall add rule name="PostgreSQL Local Network" dir=in action=allow protocol=TCP localport=5432 remoteip=192.168.1.0/24
+```
+
+Or via PowerShell:
+```powershell
+New-NetFirewallRule -DisplayName 'PostgreSQL Local Network' -Direction Inbound -Protocol TCP -LocalPort 5432 -RemoteAddress 192.168.1.0/24 -Action Allow
+```
+
+#### 3. Application Configuration
+
+**A. Determine Server IP Address**
+```cmd
+ipconfig
+# Note the IPv4 Address (e.g., 192.168.1.14)
+```
+
+**B. Update API Service Configuration**
+
+Edit `client/src/services/apiService.js`:
+```javascript
+// Replace hostname with actual IP address
+const apiBaseURL = 'http://192.168.1.14:5000'; // Use your server's IP
+```
+
+**C. Update Environment Configuration**
+
+Edit `client/.env`:
+```env
+DANGEROUSLY_DISABLE_HOST_CHECK=true
+REACT_APP_API_URL=http://192.168.1.14:5000
+```
+
+#### 4. Restart Services
+
+**A. Restart React Development Server**
+```bash
+cd client && npm start
+```
+
+**B. Ensure Node.js Server is Running**
+```bash
+cd server && npm start
+```
+
+### Testing Mobile Access
+
+#### 1. Access URLs
+- **React App**: `http://192.168.1.14:3000`
+- **API Health Check**: `http://192.168.1.14:5000/api/health`
+- **Database Test**: `http://192.168.1.14:5000/api/test-database`
+
+#### 2. Troubleshooting
+
+**Common Issues:**
+
+1. **"amtapp.local not found"**
+   - **Solution**: Use IP address instead of hostname
+   - Mobile devices often can't resolve .local domains
+
+2. **Connection timeout after 30 seconds**
+   - **Check**: Windows Firewall rule is properly configured
+   - **Check**: PostgreSQL is accepting connections from network
+
+3. **"Network error" on mobile**
+   - **Check**: Mobile device is on same subnet (192.168.1.x)
+   - **Check**: React app is using IP address in API calls
+
+**Verification Commands:**
+```bash
+# Check PostgreSQL is listening on all interfaces
+netstat -an | findstr :5432
+
+# Check firewall rules
+netsh advfirewall firewall show rule name="PostgreSQL Local Network"
+
+# Test database connectivity
+psql -h 192.168.1.14 -U postgres -d cnc_scheduler
+```
+
+#### 3. Server Logs
+
+Monitor successful mobile connections:
+```bash
+# Watch for mobile user agents and IP addresses
+# Example successful login:
+🔄 Login attempt: {
+  ip: '::ffff:192.168.1.7',
+  userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X)...',
+  timestamp: '2025-08-17T03:08:09.178Z',
+  hasUsername: true,
+  hasPassword: true
+}
+✅ Login successful: {
+  userId: 1,
+  username: 'admin',
+  ip: '::ffff:192.168.1.7',
+  timestamp: '2025-08-17T03:08:09.257Z'
+}
+```
+
+### On-Site Deployment Checklist
+
+#### Pre-Deployment
+- [ ] Identify server computer's IP address on local network
+- [ ] Ensure PostgreSQL 17 is installed and running
+- [ ] Have administrator access for firewall configuration
+
+#### Configuration Steps
+- [ ] Edit PostgreSQL pg_hba.conf for local network subnet
+- [ ] Reload PostgreSQL configuration
+- [ ] Add Windows Firewall rule for PostgreSQL
+- [ ] Update API URLs in application code
+- [ ] Update environment variables
+- [ ] Restart application services
+
+#### Testing
+- [ ] Test health endpoint from mobile device
+- [ ] Test database endpoint from mobile device
+- [ ] Perform complete login from mobile device
+- [ ] Verify all application features work on mobile
+
+#### Security Verification
+- [ ] Confirm no internet exposure (test from external network)
+- [ ] Verify firewall rule is subnet-specific
+- [ ] Check PostgreSQL authentication logs
+
+### Network Topology
+```
+Internet ❌ (No Access)
+    |
+Router/Gateway (192.168.1.1)
+    |
+Local Network Switch (192.168.1.0/24)
+    |
+├── Server PC (192.168.1.14)
+│   ├── PostgreSQL :5432
+│   ├── Node.js API :5000
+│   └── React Dev Server :3000
+│
+├── Mobile Device (192.168.1.7)
+├── Tablet (192.168.1.x)
+└── Other Local Devices (192.168.1.x)
+```
+
+### Important Notes
+- **IP Address Dependency**: Configuration is tied to specific IP address
+- **DHCP Considerations**: Use static IP for server or update configuration if IP changes
+- **Development vs Production**: This guide is for development/local deployment
+- **Subnet Flexibility**: Adjust 192.168.1.0/24 to match your local network
+
 ---
 
-*Last Updated: December 19, 2024*
-*Current Phase: Phase 3 - Advanced Features*
+*Last Updated: August 17, 2025*
+*Current Phase: Phase 3 - Advanced Features + Mobile Network Access ✅*
 *Next Milestone: Implement priority-based displacement system*

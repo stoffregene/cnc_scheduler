@@ -1,6 +1,7 @@
 const express = require('express');
 const SchedulingService = require('../services/schedulingService');
 const ConflictPreventionService = require('../services/conflictPreventionService');
+const { authenticateToken, requirePermission } = require('../middleware/auth');
 const router = express.Router();
 
 // Get scheduling service instance
@@ -9,7 +10,7 @@ const getSchedulingService = (req) => {
 };
 
 // Get all scheduled slots for a specific date range
-router.get('/slots', async (req, res) => {
+router.get('/slots', authenticateToken, requirePermission('schedules.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { start_date, end_date, machine_id, employee_id, job_id } = req.query;
@@ -80,7 +81,7 @@ router.get('/slots', async (req, res) => {
 });
 
 // Get machine workload view for kanban boards
-router.get('/machine-workload', async (req, res) => {
+router.get('/machine-workload', authenticateToken, requirePermission('schedules.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { date } = req.query;
@@ -137,7 +138,7 @@ router.get('/machine-workload', async (req, res) => {
 });
 
 // Create a new schedule slot
-router.post('/slots', async (req, res) => {
+router.post('/slots', authenticateToken, requirePermission('schedules.create'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const {
@@ -184,7 +185,7 @@ router.post('/slots', async (req, res) => {
 });
 
 // Schedule a specific job
-router.post('/schedule-job/:id', async (req, res) => {
+router.post('/schedule-job/:id', authenticateToken, requirePermission('schedules.auto_schedule'), async (req, res) => {
   try {
     const jobId = req.params.id;
     const { force_reschedule } = req.body;
@@ -200,7 +201,7 @@ router.post('/schedule-job/:id', async (req, res) => {
 });
 
 // Auto-schedule all pending jobs
-router.post('/auto-schedule', async (req, res) => {
+router.post('/auto-schedule', authenticateToken, requirePermission('schedules.auto_schedule'), async (req, res) => {
   try {
     const schedulingService = getSchedulingService(req);
     const results = await schedulingService.autoScheduleAllJobs();
@@ -220,7 +221,7 @@ router.post('/auto-schedule', async (req, res) => {
 });
 
 // Update schedule slot (manual override)
-router.put('/slots/:id', async (req, res) => {
+router.put('/slots/:id', authenticateToken, requirePermission('schedules.edit'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const slotId = req.params.id;
@@ -318,7 +319,7 @@ router.put('/slots/:id', async (req, res) => {
 });
 
 // Delete schedule slot
-router.delete('/slots/:id', async (req, res) => {
+router.delete('/slots/:id', authenticateToken, requirePermission('schedules.delete'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const slotId = req.params.id;
@@ -337,7 +338,7 @@ router.delete('/slots/:id', async (req, res) => {
 });
 
 // Unschedule all jobs - remove all schedule slots
-router.delete('/unschedule-all', async (req, res) => {
+router.delete('/unschedule-all', authenticateToken, requirePermission('schedules.delete'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     
@@ -393,7 +394,7 @@ router.delete('/unschedule-all', async (req, res) => {
 });
 
 // Get scheduling conflicts
-router.get('/conflicts', async (req, res) => {
+router.get('/conflicts', authenticateToken, requirePermission('schedules.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { resolved } = req.query;
@@ -428,7 +429,7 @@ router.get('/conflicts', async (req, res) => {
 });
 
 // Get scheduling parameters
-router.get('/parameters', async (req, res) => {
+router.get('/parameters', authenticateToken, requirePermission('schedules.view'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const result = await pool.query('SELECT * FROM scheduling_parameters ORDER BY parameter_name');
@@ -440,7 +441,7 @@ router.get('/parameters', async (req, res) => {
 });
 
 // Update scheduling parameter
-router.put('/parameters/:name', async (req, res) => {
+router.put('/parameters/:name', authenticateToken, requirePermission('system.settings'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const { name } = req.params;
@@ -465,7 +466,7 @@ router.put('/parameters/:name', async (req, res) => {
 });
 
 // Unschedule and reschedule a job with correct machine assignments
-router.post('/reschedule-job/:id', async (req, res) => {
+router.post('/reschedule-job/:id', authenticateToken, requirePermission('schedules.reschedule'), async (req, res) => {
   try {
     const jobId = req.params.id;
     const { force_start_date, partial, startFromOperation } = req.body;
@@ -504,7 +505,7 @@ router.post('/reschedule-job/:id', async (req, res) => {
 });
 
 // Unschedule a job (clear all schedule slots)
-router.delete('/unschedule-job/:id', async (req, res) => {
+router.delete('/unschedule-job/:id', authenticateToken, requirePermission('schedules.unschedule'), async (req, res) => {
   try {
     const { pool } = req.app.locals;
     const jobId = req.params.id;
@@ -548,7 +549,7 @@ router.delete('/unschedule-job/:id', async (req, res) => {
 });
 
 // Get available time slots for manual scheduling
-router.get('/available-slots', async (req, res) => {
+router.get('/available-slots', authenticateToken, requirePermission('schedules.view'), async (req, res) => {
   try {
     const { machine_id, employee_id, duration_minutes, start_date, exclude_job_id } = req.query;
     

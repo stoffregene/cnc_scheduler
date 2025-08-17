@@ -53,7 +53,7 @@ const OutsourcingTile = () => {
     try {
       setLoading(true);
       const response = await apiService.get('/api/outsourcing/summary');
-      setData(response.data);
+      setData(response);
       setError(null);
     } catch (err) {
       console.error('Error fetching outsourcing data:', err);
@@ -118,7 +118,7 @@ const OutsourcingTile = () => {
     // Fetch job routings with scheduling information
     try {
       const response = await apiService.get(`/api/jobs/${operation.job_id}/routings`);
-      setJobRoutings(response.data);
+      setJobRoutings(response);
     } catch (error) {
       console.error('Error fetching job routings:', error);
       setJobRoutings([]);

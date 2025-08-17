@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   Box,
   Grid,
@@ -94,7 +94,7 @@ const Dashboard = () => {
     }
   }, [capacityPeriod, capacityDate]);
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(async () => {
     try {
       setLoading(true);
       const capacityParams = new URLSearchParams({
@@ -110,17 +110,17 @@ const Dashboard = () => {
         apiService.get(`/api/shift-capacity/capacity?${capacityParams}`),
       ]);
 
-      setMachineView(machineData.data);
-      setJobs(jobsData.data);
-      setDashboardData({ ...summaryData.data, employees: employeeData.data });
-      setShiftCapacity(shiftCapacityData.data);
+      setMachineView(machineData); // machineData is already just the data
+      setJobs(jobsData.data); // jobsData still returns full response
+      setDashboardData({ ...summaryData, employees: employeeData }); // these are already just the data
+      setShiftCapacity(shiftCapacityData);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
       toast.error('Failed to load dashboard data');
     } finally {
       setLoading(false);
     }
-  };
+  }, [capacityPeriod, capacityDate]);
 
   const fetchShiftCapacityData = async () => {
     try {
@@ -130,7 +130,7 @@ const Dashboard = () => {
       });
       
       const shiftCapacityData = await apiService.get(`/api/shift-capacity/capacity?${capacityParams}`);
-      setShiftCapacity(shiftCapacityData.data);
+      setShiftCapacity(shiftCapacityData); // Fixed: consistent with fetchDashboardData
     } catch (error) {
       console.error('Error fetching shift capacity data:', error);
       toast.error('Failed to load shift capacity data');
@@ -372,9 +372,28 @@ const Dashboard = () => {
     return '#9e9e9e';
   };
   
-  // Sort machines with jobs at top, prioritize mills/lathes
-  const sortMachines = (machines) => {
-    return [...machines].sort((a, b) => {
+  // Memoized machine priority function
+  const getMachinePriority = useCallback((name) => {
+    const upperName = name?.toUpperCase() || '';
+    if (upperName.includes('MILL')) return 1;
+    if (upperName.includes('LATHE')) return 2;
+    if (upperName.includes('VMC')) return 3;
+    if (upperName.includes('HMC')) return 4;
+    if (upperName.includes('SAW')) return 5;
+    if (upperName.includes('WJ') || upperName.includes('WATERJET')) return 6;
+    if (upperName.includes('GRIND')) return 7;
+    if (upperName.includes('DRILL')) return 8;
+    if (upperName.includes('DEBURR')) return 9;
+    if (upperName.includes('INSPECT')) return 10;
+    return 99;
+  }, []);
+
+  // Memoized sorted machines
+  const sortedMachines = useMemo(() => {
+    if (!machineView || !Array.isArray(machineView)) {
+      return [];
+    }
+    return [...machineView].sort((a, b) => {
       // First priority: machines with current jobs vs without
       const aHasJobs = a.schedules && a.schedules.length > 0;
       const bHasJobs = b.schedules && b.schedules.length > 0;
@@ -383,21 +402,6 @@ const Dashboard = () => {
       if (!aHasJobs && bHasJobs) return 1;
       
       // Second priority: machine type priority
-      const getMachinePriority = (name) => {
-        const upperName = name?.toUpperCase() || '';
-        if (upperName.includes('MILL')) return 1;
-        if (upperName.includes('LATHE')) return 2;
-        if (upperName.includes('VMC')) return 3;
-        if (upperName.includes('HMC')) return 4;
-        if (upperName.includes('SAW')) return 5;
-        if (upperName.includes('WJ') || upperName.includes('WATERJET')) return 6;
-        if (upperName.includes('GRIND')) return 7;
-        if (upperName.includes('DRILL')) return 8;
-        if (upperName.includes('DEBURR')) return 9;
-        if (upperName.includes('INSPECT')) return 10;
-        return 99;
-      };
-      
       const aPriority = getMachinePriority(a.machine_name);
       const bPriority = getMachinePriority(b.machine_name);
       
@@ -408,9 +412,71 @@ const Dashboard = () => {
       // Third priority: number of scheduled jobs
       return (b.schedules?.length || 0) - (a.schedules?.length || 0);
     });
-  };
+  }, [machineView, getMachinePriority]);
 
-  const MachineCard = ({ machine }) => {
+  // Memoized employees working now calculation
+  const employeesWorkingNow = useMemo(() => {
+    if (!dashboardData?.employees) return [];
+    
+    const currentTime = new Date();
+    const currentDay = currentTime.getDay();
+    const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+    
+    return dashboardData.employees.filter(emp => {
+      if (!emp.work_days?.includes(currentDay)) return false;
+      
+      let startHour, endHour;
+      if (emp.custom_start_hour !== null && emp.custom_end_hour !== null) {
+        startHour = emp.custom_start_hour;
+        endHour = emp.custom_end_hour;
+      } else if (emp.start_time && emp.end_time) {
+        startHour = parseInt(emp.start_time.split(':')[0]);
+        endHour = parseInt(emp.end_time.split(':')[0]);
+      } else {
+        return false;
+      }
+      
+      const startMinutes = startHour * 60;
+      const endMinutes = endHour * 60;
+      
+      return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+    });
+  }, [dashboardData?.employees]);
+
+  // Memoized active machines count
+  const activeMachinesCount = useMemo(() => {
+    if (!machineView || !employeesWorkingNow.length) return 0;
+    
+    const currentTime = new Date();
+    const today = new Date().toDateString();
+    
+    return machineView.filter(machine => {
+      return machine.schedules?.some(schedule => {
+        const startTime = new Date(schedule.start_time);
+        const endTime = new Date(schedule.end_time);
+        const scheduleDate = startTime.toDateString();
+        const isToday = today === scheduleDate;
+        
+        const assignedEmployee = employeesWorkingNow.find(emp => 
+          schedule.employee_name?.includes(emp.first_name) && 
+          schedule.employee_name?.includes(emp.last_name)
+        );
+        
+        return isToday && 
+               currentTime >= startTime && 
+               currentTime <= endTime && 
+               schedule.status === 'scheduled' &&
+               assignedEmployee;
+      });
+    }).length;
+  }, [machineView, employeesWorkingNow]);
+
+  // Memoized recent jobs (first 12)
+  const recentJobs = useMemo(() => {
+    return jobs?.slice(0, 12) || [];
+  }, [jobs]);
+
+  const MachineCard = memo(({ machine }) => {
     const currentTime = new Date();
     const currentDay = currentTime.getDay(); // 0=Sunday, 1=Monday, etc.
     const currentHour = currentTime.getHours();
@@ -569,9 +635,9 @@ const Dashboard = () => {
         </CardContent>
       </Card>
     );
-  };
+  });
 
-  const JobTile = ({ job }) => {
+  const JobTile = memo(({ job }) => {
     const dueDateStatus = getDueDateStatus(job.due_date);
     
     return (
@@ -631,7 +697,7 @@ const Dashboard = () => {
         </CardContent>
       </Card>
     );
-  };
+  });
 
   if (loading) {
     return (
@@ -670,56 +736,7 @@ const Dashboard = () => {
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
             title="Active Machines"
-            value={(() => {
-              const currentTime = new Date();
-              const currentDay = currentTime.getDay();
-              const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
-              
-              const employeesWorkingNow = dashboardData?.employees?.filter(emp => {
-                if (!emp.work_days?.includes(currentDay)) return false;
-                
-                let startHour, endHour;
-                if (emp.custom_start_hour !== null && emp.custom_end_hour !== null) {
-                  startHour = emp.custom_start_hour;
-                  endHour = emp.custom_end_hour;
-                } else if (emp.start_time && emp.end_time) {
-                  startHour = parseInt(emp.start_time.split(':')[0]);
-                  endHour = parseInt(emp.end_time.split(':')[0]);
-                } else {
-                  return false;
-                }
-                
-                const startMinutes = startHour * 60;
-                const endMinutes = endHour * 60;
-                
-                return currentMinutes >= startMinutes && currentMinutes < endMinutes;
-              }) || [];
-              
-              const activeMachines = machineView?.filter(machine => {
-                const hasCurrentJob = machine.schedules?.some(schedule => {
-                  const startTime = new Date(schedule.start_time);
-                  const endTime = new Date(schedule.end_time);
-                  const today = new Date().toDateString();
-                  const scheduleDate = startTime.toDateString();
-                  const isToday = today === scheduleDate;
-                  
-                  const assignedEmployee = employeesWorkingNow.find(emp => 
-                    schedule.employee_name?.includes(emp.first_name) && 
-                    schedule.employee_name?.includes(emp.last_name)
-                  );
-                  
-                  return isToday && 
-                         currentTime >= startTime && 
-                         currentTime <= endTime && 
-                         schedule.status === 'scheduled' &&
-                         assignedEmployee;
-                });
-                
-                return hasCurrentJob;
-              }) || [];
-              
-              return activeMachines.length;
-            })()}
+            value={activeMachinesCount}
             icon={<BuildIcon />}
             color="success"
             subtitle="Currently running"
@@ -962,7 +979,7 @@ const Dashboard = () => {
         Machines
       </Typography>
       <Grid container spacing={3} mb={4}>
-        {sortMachines(machineView).map((machine) => (
+        {sortedMachines.map((machine) => (
           <Grid item xs={12} sm={6} md={4} lg={3} key={machine.machine_id}>
             <MachineCard machine={machine} />
           </Grid>
@@ -974,7 +991,7 @@ const Dashboard = () => {
         Recent Jobs
       </Typography>
       <Grid container spacing={2}>
-        {jobs.slice(0, 12).map((job) => (
+        {recentJobs.map((job) => (
           <Grid item xs={12} sm={6} md={4} lg={3} key={job.id}>
             <JobTile job={job} />
           </Grid>

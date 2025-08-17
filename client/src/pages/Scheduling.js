@@ -68,8 +68,8 @@ const Scheduling = () => {
         apiService.get('/api/scheduling/machine-workload')
       ]);
       
-      setJobs(jobsResponse.data);
-      setMachineWorkload(workloadResponse.data);
+      setJobs(jobsResponse);
+      setMachineWorkload(workloadResponse);
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('Failed to load scheduling data');
@@ -83,15 +83,15 @@ const Scheduling = () => {
       setScheduling(true);
       const response = await apiService.post('/api/scheduling/auto-schedule');
       
-      setSchedulingResults(response.data);
+      setSchedulingResults(response);
       
-      if (response.data.successful > 0) {
-        toast.success(`Successfully scheduled ${response.data.successful} jobs!`);
+      if (response.successful > 0) {
+        toast.success(`Successfully scheduled ${response.successful} jobs!`);
         fetchData(); // Refresh data
       }
       
-      if (response.data.failed > 0) {
-        toast.error(`Failed to schedule ${response.data.failed} jobs`);
+      if (response.failed > 0) {
+        toast.error(`Failed to schedule ${response.failed} jobs`);
       }
     } catch (error) {
       console.error('Error auto-scheduling:', error);
@@ -137,24 +137,24 @@ const Scheduling = () => {
         try {
           const response = await apiService.post(`/api/displacement/schedule-with-displacement/${job.id}`);
           
-          if (response.data.success) {
+          if (response.success) {
             results.scheduled++;
-            if (response.data.displacementUsed) {
+            if (response.displacementUsed) {
               results.displaced++;
               results.optimized++;
             }
             results.details.push({
               jobNumber: job.job_number,
               success: true,
-              displaced: response.data.displacementUsed || false,
-              message: response.data.message
+              displaced: response.displacementUsed || false,
+              message: response.message
             });
           } else {
             results.failed++;
             results.details.push({
               jobNumber: job.job_number,
               success: false,
-              message: response.data.message || 'Failed to schedule'
+              message: response.message || 'Failed to schedule'
             });
           }
         } catch (jobError) {
@@ -199,7 +199,7 @@ const Scheduling = () => {
     // Fetch job routings
     try {
       const response = await apiService.get(`/api/jobs/${job.id}/routings`);
-      setJobRoutings(response.data);
+      setJobRoutings(response);
     } catch (error) {
       console.error('Error fetching job routings:', error);
       setJobRoutings([]);
@@ -213,7 +213,7 @@ const Scheduling = () => {
         reason: lock ? 'Manual lock - High priority job' : undefined
       });
       
-      if (response.data.success) {
+      if (response.success) {
         toast.success(lock ? 'Job locked successfully' : 'Job unlocked successfully');
         fetchData(); // Refresh data
         setJobDialogOpen(false);
@@ -277,8 +277,8 @@ const Scheduling = () => {
     return 'STANDARD';
   };
 
-  const pendingJobs = jobs.filter(job => job.status === 'pending');
-  const scheduledJobs = jobs.filter(job => job.status === 'scheduled');
+  const pendingJobs = jobs?.filter(job => job.status === 'pending') || [];
+  const scheduledJobs = jobs?.filter(job => job.status === 'scheduled') || [];
 
   if (loading) {
     return (
@@ -326,7 +326,7 @@ const Scheduling = () => {
                 color="secondary"
                 startIcon={optimizing ? <CircularProgress size={20} /> : <OptimizeIcon />}
                 onClick={handleOptimizeAll}
-                disabled={scheduling || optimizing || jobs.length === 0}
+                disabled={scheduling || optimizing || (jobs?.length || 0) === 0}
                 size="large"
                 sx={{
                   bgcolor: '#f59e0b',
@@ -367,7 +367,7 @@ const Scheduling = () => {
               </AccordionSummary>
               <AccordionDetails>
                 <List dense>
-                  {schedulingResults.details.map((result, index) => (
+                  {(schedulingResults?.details || []).map((result, index) => (
                     <ListItem key={index}>
                       <ListItemText
                         primary={result.job_number}
@@ -425,7 +425,7 @@ const Scheduling = () => {
               </AccordionSummary>
               <AccordionDetails>
                 <List dense>
-                  {optimizeResults.details.map((result, index) => (
+                  {(optimizeResults?.details || []).map((result, index) => (
                     <ListItem key={index}>
                       <ListItemText
                         primary={result.jobNumber}
@@ -569,7 +569,7 @@ const Scheduling = () => {
                 Machine Workload Today
               </Typography>
               <List dense>
-                {machineWorkload.map((machine, index) => (
+                {(machineWorkload || []).map((machine, index) => (
                   <ListItem
                     key={`machine-${machine.machine_id}-${index}`}
                     sx={{
@@ -611,7 +611,7 @@ const Scheduling = () => {
                     />
                   </ListItem>
                 ))}
-                {machineWorkload.length === 0 && (
+                {(machineWorkload?.length || 0) === 0 && (
                   <Alert severity="info">No machines with scheduled work today</Alert>
                 )}
               </List>
@@ -679,13 +679,13 @@ const Scheduling = () => {
                 </Grid>
                 
                 {/* Job Routings */}
-                {jobRoutings.length > 0 && (
+                {(jobRoutings?.length || 0) > 0 && (
                   <Grid item xs={12}>
                     <Typography variant="subtitle1" gutterBottom>
                       Operations & Routing
                     </Typography>
                     <List dense>
-                      {jobRoutings.map((routing) => (
+                      {(jobRoutings || []).map((routing) => (
                         <ListItem key={routing.id} sx={{ 
                           border: '1px solid',
                           borderColor: 'divider',

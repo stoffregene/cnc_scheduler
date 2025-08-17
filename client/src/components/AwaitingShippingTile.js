@@ -51,7 +51,7 @@ const AwaitingShippingTile = () => {
     try {
       setLoading(true);
       const response = await apiService.get('/api/jobs/awaiting-shipping');
-      setData(response.data);
+      setData(response);
       setError(null);
     } catch (err) {
       console.error('Error fetching awaiting shipping data:', err);

@@ -50,9 +50,12 @@ import { apiService } from '../services/apiService';
 import Logo from '../components/Logo';
 import RoutingSelector from '../components/RoutingSelector';
 import AssemblyManager from '../components/AssemblyManager';
+import PermissionGuard from '../components/PermissionGuard';
+import { usePermissions } from '../hooks/usePermissions';
 
 const JobManagement = () => {
   const navigate = useNavigate();
+  const { can } = usePermissions();
   const [jobs, setJobs] = useState([]);
   const [machines, setMachines] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -101,9 +104,10 @@ const JobManagement = () => {
     try {
       setLoading(true);
       const response = await apiService.jobs.getAll();
-      setJobs(response.data);
+      setJobs(response || []); // apiService.jobs.getAll() returns data directly
     } catch (error) {
       console.error('Error fetching jobs:', error);
+      setJobs([]); // Set empty array on error to prevent undefined filter
       toast.error('Failed to load jobs');
     } finally {
       setLoading(false);
@@ -113,9 +117,10 @@ const JobManagement = () => {
   const fetchMachines = async () => {
     try {
       const response = await apiService.get('/api/machines');
-      setMachines(response.data);
+      setMachines(response || []); // apiService.get() returns data directly
     } catch (error) {
       console.error('Error fetching machines:', error);
+      setMachines([]); // Set empty array on error
     }
   };
 
@@ -323,7 +328,7 @@ const JobManagement = () => {
     }
   };
 
-  const filteredJobs = jobs.filter(job => {
+  const filteredJobs = (jobs || []).filter(job => {
     const matchesStatus = !filters.status || job.status === filters.status;
     const matchesPriority = !filters.priority || job.priority_score >= parseInt(filters.priority);
     const matchesCustomer = !filters.customer || 
@@ -422,16 +427,20 @@ const JobManagement = () => {
                   <VisibilityIcon />
                 </IconButton>
               </Tooltip>
-              <Tooltip title="Edit Job">
-                <IconButton size="small" onClick={() => handleOpenDialog(job)}>
-                  <EditIcon />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Delete Job">
-                <IconButton size="small" onClick={() => handleDelete(job)}>
-                  <DeleteIcon />
-                </IconButton>
-              </Tooltip>
+              <PermissionGuard permission="jobs.edit">
+                <Tooltip title="Edit Job">
+                  <IconButton size="small" onClick={() => handleOpenDialog(job)}>
+                    <EditIcon />
+                  </IconButton>
+                </Tooltip>
+              </PermissionGuard>
+              <PermissionGuard permission="jobs.delete">
+                <Tooltip title="Delete Job">
+                  <IconButton size="small" onClick={() => handleDelete(job)}>
+                    <DeleteIcon />
+                  </IconButton>
+                </Tooltip>
+              </PermissionGuard>
             </Box>
           </Box>
         </CardContent>
@@ -469,39 +478,47 @@ const JobManagement = () => {
             Manage production jobs and import from JobBoss ERP
           </Typography>
         </Box>
-                  <Button
-            variant="outlined"
-            startIcon={<UploadIcon />}
-            onClick={() => setImportDialogOpen(true)}
-            sx={{ mr: 2 }}
-          >
-            Import CSV
-          </Button>
-          <Button
-            variant="outlined"
-            color="error"
-            startIcon={<DeleteSweepIcon />}
-            onClick={() => setDeleteAllDialogOpen(true)}
-            sx={{ mr: 2 }}
-            disabled={jobs.length === 0}
-          >
-            Delete All Jobs
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<BuildIcon />}
-            onClick={() => setAssemblyManagerOpen(true)}
-            sx={{ mr: 2 }}
-          >
-            Assembly Manager
-          </Button>
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => handleOpenDialog()}
-          >
-            Add Job
-          </Button>
+          <PermissionGuard permission="jobs.import">
+            <Button
+              variant="outlined"
+              startIcon={<UploadIcon />}
+              onClick={() => setImportDialogOpen(true)}
+              sx={{ mr: 2 }}
+            >
+              Import CSV
+            </Button>
+          </PermissionGuard>
+          <PermissionGuard permission="jobs.delete">
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteSweepIcon />}
+              onClick={() => setDeleteAllDialogOpen(true)}
+              sx={{ mr: 2 }}
+              disabled={jobs.length === 0}
+            >
+              Delete All Jobs
+            </Button>
+          </PermissionGuard>
+          <PermissionGuard permission="jobs.view">
+            <Button
+              variant="outlined"
+              startIcon={<BuildIcon />}
+              onClick={() => setAssemblyManagerOpen(true)}
+              sx={{ mr: 2 }}
+            >
+              Assembly Manager
+            </Button>
+          </PermissionGuard>
+          <PermissionGuard permission="jobs.create">
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => handleOpenDialog()}
+            >
+              Add Job
+            </Button>
+          </PermissionGuard>
         </Box>
 
       {/* Filters and Search */}
@@ -959,30 +976,36 @@ const JobManagement = () => {
             </DialogContent>
             <DialogActions>
               <Button onClick={() => setSelectedJob(null)}>Close</Button>
-              {selectedJob.schedule_locked ? (
+              <PermissionGuard permission="locks.create">
+                {selectedJob.schedule_locked ? (
+                  <PermissionGuard permission="locks.delete">
+                    <Button
+                      color="warning"
+                      startIcon={<LockIcon />}
+                      onClick={() => handleLockJob(selectedJob.id, false)}
+                    >
+                      Unlock Job
+                    </Button>
+                  </PermissionGuard>
+                ) : (
+                  <Button
+                    color="warning"
+                    startIcon={<LockIcon />}
+                    onClick={() => handleLockJob(selectedJob.id, true)}
+                  >
+                    Lock Job
+                  </Button>
+                )}
+              </PermissionGuard>
+              <PermissionGuard permission="jobs.delete">
                 <Button
-                  color="warning"
-                  startIcon={<LockIcon />}
-                  onClick={() => handleLockJob(selectedJob.id, false)}
+                  color="error"
+                  onClick={() => handleDelete(selectedJob)}
+                  disabled={selectedJob.schedule_locked}
                 >
-                  Unlock Job
+                  Delete Job
                 </Button>
-              ) : (
-                <Button
-                  color="warning"
-                  startIcon={<LockIcon />}
-                  onClick={() => handleLockJob(selectedJob.id, true)}
-                >
-                  Lock Job
-                </Button>
-              )}
-              <Button
-                color="error"
-                onClick={() => handleDelete(selectedJob)}
-                disabled={selectedJob.schedule_locked}
-              >
-                Delete Job
-              </Button>
+              </PermissionGuard>
             </DialogActions>
           </>
         )}

@@ -53,13 +53,13 @@ const ManualRescheduleControls = ({ selectedSlot, onReschedule, machines, machin
       let suitableMachines;
       if (isInspectOperation) {
         // INSPECT operations can only go to INSPECT machines
-        suitableMachines = machines.filter(m => 
+        suitableMachines = (machines || []).filter(m => 
           m.status === 'active' && 
           m.name?.toLowerCase().includes('inspect')
         );
       } else {
         // Production operations cannot go to INSPECT machines
-        suitableMachines = machines.filter(m => 
+        suitableMachines = (machines || []).filter(m => 
           m.status === 'active' && 
           !m.name?.toLowerCase().includes('inspect')
         );
@@ -438,13 +438,16 @@ const ScheduleView = () => {
 
   useEffect(() => {
     fetchScheduleData();
+  }, [currentDate, viewMode]);
+
+  useEffect(() => {
+    // Fetch machines and groups only once since they don't change frequently
     fetchMachines();
     fetchMachineGroups();
-  }, [currentDate, viewMode]);
+  }, []);
 
   const fetchScheduleData = async () => {
     try {
-      setLoading(true);
       const startDate = getViewStartDate();
       const endDate = getViewEndDate();
       
@@ -455,30 +458,40 @@ const ScheduleView = () => {
         }
       });
       
-      setScheduleSlots(response.data);
+      // Only update slots if we got a valid response
+      if (response) {
+        setScheduleSlots(response);
+      }
     } catch (error) {
       console.error('Error fetching schedule data:', error);
       toast.error('Failed to load schedule data');
     } finally {
-      setLoading(false);
+      // Only turn off main loading after first successful load
+      if (loading) {
+        setLoading(false);
+      }
     }
   };
 
   const fetchMachines = async () => {
     try {
       const response = await apiService.get('/api/machines');
-      setMachines(response.data);
+      setMachines(response || []); // apiService.get() returns data directly
     } catch (error) {
       console.error('Error fetching machines:', error);
+      // Set empty array if user doesn't have permission to view machines
+      setMachines([]);
     }
   };
 
   const fetchMachineGroups = async () => {
     try {
       const response = await apiService.get('/api/machines/groups/all');
-      setMachineGroups(response.data);
+      setMachineGroups(response || []); // apiService.get() returns data directly
     } catch (error) {
       console.error('Error fetching machine groups:', error);
+      // Set empty array if user doesn't have permission to view machine groups
+      setMachineGroups([]);
     }
   };
 
@@ -711,7 +724,7 @@ const ScheduleView = () => {
       
       // Step 1: Get all schedule slots for this job to find ALL chunks of this operation
       const slotsResponse = await apiService.get(`/api/scheduling/slots`, { params: { job_id: selectedSlot.job_id } });
-      const allJobSlots = slotsResponse.data;
+      const allJobSlots = slotsResponse || []; // apiService.get() returns data directly
       
       // Find ALL chunks/slots that belong to the same operation (job_routing_id)
       const operationSlots = allJobSlots.filter(slot => slot.job_routing_id === selectedSlot.job_routing_id);
@@ -719,7 +732,7 @@ const ScheduleView = () => {
       
       // Step 2: Get job routings to understand the operation sequence
       const routingsResponse = await apiService.get(`/api/jobs/${selectedSlot.job_id}/routings`);
-      const jobRoutings = routingsResponse.data;
+      const jobRoutings = routingsResponse || []; // apiService.get() returns data directly
       
       const currentOperation = jobRoutings.find(r => r.id === selectedSlot.job_routing_id);
       if (!currentOperation) {
@@ -767,10 +780,11 @@ const ScheduleView = () => {
         try {
           // Get employee's weekly schedule pattern to validate they work on target date
           const workHoursResponse = await apiService.get(`/api/employees/${employeeId}/work-schedules`);
+          const workSchedules = workHoursResponse || []; // apiService.get() returns data directly
           
-          if (workHoursResponse.data && workHoursResponse.data.length > 0) {
+          if (workSchedules && workSchedules.length > 0) {
             const targetDayOfWeek = dayOfWeek;
-            const workingDays = workHoursResponse.data.filter(day => day.enabled);
+            const workingDays = workSchedules.filter(day => day.enabled);
             const targetDaySchedule = workingDays.find(day => day.day_of_week === targetDayOfWeek);
             
             console.log(`🗓️ Target date is day ${targetDayOfWeek} (${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][targetDayOfWeek]})`);
@@ -923,7 +937,7 @@ const ScheduleView = () => {
     }
   };
 
-  const activeMachines = machines.filter(m => m.status === 'active');
+  const activeMachines = machines?.filter(m => m.status === 'active') || [];
   const daysInView = getDaysInView();
 
   if (loading) {
